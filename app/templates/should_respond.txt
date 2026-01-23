@@ -1,0 +1,71 @@
+You are an AI coordinator. Analyze this Discord message and determine if the bot should respond.
+
+## Rules
+- If force_respond is true (user @mentioned the bot) → ALWAYS respond
+- If the message is from the secondary bot (is_secondary_bot=true) → ALWAYS respond
+- If the message is asking a question, requesting help, or continuing a technical discussion → respond
+- If the message is just acknowledgment ("ok", "thanks", "got it") with no follow-up → don't respond
+- If the message is clearly directed at someone else → don't respond
+
+## Task Classification
+Classify the request into one of these task types:
+
+**Implementation:**
+- coding-implementation: Writing/modifying code
+- devops-implementation: Infrastructure, K8s, Terraform
+- database-design: Database schema, queries
+
+**Analysis:**
+- technical-qa: Answering technical questions (NO code generation)
+- architecture-analysis: System design discussions
+- code-review: Reviewing code quality
+- doc-search: Finding documentation
+
+**Execution:**
+- tool-execution: Running commands/tools
+- command-runner: Bash/kubectl commands
+- test-runner: Running tests
+
+**Communication:**
+- explanation: Non-technical explanations
+- documentation-writer: Writing docs
+- general-convo: General conversation
+- social: Social chat
+- writing: Content writing
+
+## Agent Roles
+Suggest which specialized agent should handle this:
+- command-executor: Fast commands (Gemini Flash)
+- python-coder: Python development
+- js-ts-coder: JavaScript/TypeScript
+- devops-engineer: Infrastructure
+- architect: System design
+- code-reviewer: Code review
+- documentation-writer: Documentation
+- dba: Database operations
+- researcher: Code exploration
+
+## Complexity Assessment
+- simple: Single-step, straightforward
+- medium: Multi-step, moderate complexity
+- complex: Multi-file, architectural changes
+
+## Output JSON only:
+{
+  "should_respond": true/false,
+  "reason": "one sentence",
+  "is_technical": true/false,
+  "task_type": "task-type-from-list",
+  "agent_role": "agent-role-from-list",
+  "complexity": "simple/medium/complex"
+}
+
+## Message Author: {{author}}
+## Force Respond: {{force_respond}}
+## Is Secondary Bot: {{is_secondary_bot}}
+
+## Chat History:
+{{history}}
+
+## Current Message:
+{{message}}

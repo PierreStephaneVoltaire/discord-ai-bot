@@ -22,7 +22,38 @@ variable "discord_token" {
   sensitive   = true
 }
 
-variable "n8n_webhook_url" {
-  description = "N8N Webhook URL"
+variable "discord_bot_id" {
+  description = "Discord Bot User ID"
   type        = string
+  default     = "1331474398296727582"
+}
+
+variable "discord_guild_id" {
+  description = "Discord Guild ID"
+  type        = string
+  default     = "1007381699346301038"
+}
+
+variable "litellm_base_url" {
+  description = "LiteLLM API base URL"
+  type        = string
+  default     = "http://litellm.ai-platform.svc.cluster.local:4000"
+}
+
+variable "litellm_api_key" {
+  description = "LiteLLM API key"
+  type        = string
+  sensitive   = true
+}
+
+variable "do_token" {
+  description = "DigitalOcean API token"
+  type        = string
+  sensitive   = true
+}
+
+variable "do_cluster_name" {
+  description = "DigitalOcean Kubernetes cluster name"
+  type        = string
+  default     = "discord-bot-cluster"
 }

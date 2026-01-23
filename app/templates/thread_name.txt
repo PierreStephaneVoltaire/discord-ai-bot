@@ -1,0 +1,9 @@
+Summarize what the user is asking for in 3-7 words. This will be used as a thread title. Do NOT answer the question. Just give a short topic label.
+
+Examples:
+- 'give me a bash script that installs jenkins on ubuntu' → 'Ubuntu Jenkins Install'
+- 'how do I fix this typescript error' → 'TypeScript Error Fix'
+- 'can you help me setup kubernetes' → 'Kubernetes Setup Help'
+- 'write a python function to parse json' → 'Python JSON Parser'
+
+Return ONLY the short title, nothing else.
