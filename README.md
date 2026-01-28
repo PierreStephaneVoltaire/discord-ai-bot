@@ -3,10 +3,14 @@
 An autonomous multi-agent Discord bot that can execute complex multi-turn tasks, self-correct, escalate when stuck, and interact with users through reactions and clarifications.
 
 **Key Features:**
-- 🤖 Multi-turn agentic execution (like Claude Code + Claude.ai)
+- 🤖 Multi-turn agentic execution with **Reflexion** learning pattern
+- 🧠 **Chain-of-Thought** prompting for step-by-step reasoning
+- 🗂️ Per-thread S3 artifact storage with automatic file sync
 - 🎯 Specialized agent roles (Python coder, DevOps engineer, Architect, etc.)
 - 📈 Automatic model escalation (Gemini → Sonnet → Opus)
+- 🔄 **Self-reflection** and persistent learning from past attempts
 - 🛑 Human-in-the-loop controls (stop, approve, reject via reactions)
+- 👍👎 User feedback directly influences confidence scores
 - 📊 Full observability (DynamoDB logs, SQS events, Discord progress)
 - 🔒 Thread-safe execution with abort flags
 - ⚡ Intelligent task classification and routing
@@ -27,15 +31,44 @@ User Message
     ├─→ SIMPLE (social, general chat)
     │   └─→ Single turn, no tools, no planning
     │
-    ├─→ TECHNICAL_SIMPLE (Q&A, commands)
-    │   └─→ Single turn with tools, no planning
+    ├─→ BRANCH (multi-solution brainstorming)
+    │   └─→ Multiple models explore different architectural approaches
+    │   └─→ Theoretical only, no code generation
     │
-    ├─→ TECHNICAL (implementation with planning)
-    │   └─→ Single turn with plan + tools
+    ├─→ SEQUENTIAL-THINKING (complex multi-turn with Reflexion)
+    │   └─→ Chain-of-Thought execution with self-reflection
+    │   └─→ Per-thread artifact storage in S3
+    │   └─→ Evaluator scores trajectory → Opus reflects
     │
-    └─→ AGENTIC (complex multi-turn)
-        └─→ Multi-turn loop with escalation
+    └─→ BREAKGLASS (emergency override)
+        └─→ Direct Opus access, bypasses all checks
 ```
+
+### Reflexion Learning Pattern
+
+The sequential-thinking flow implements the **Reflexion** pattern for continuous improvement:
+
+```
+1. Load Session (reflections + key insights from DynamoDB)
+   ↓
+2. Opus Plans (informed by previous trajectory + evaluation)
+   ↓
+3. Actor Executes (Chain-of-Thought prompting)
+   ↓
+4. Evaluator Scores Trajectory (task completion, code quality, efficiency)
+   ↓
+5. Opus Self-Reflects (what worked, what failed, strategy change)
+   ↓
+6. Save to Memory (sliding window: last 5 reflections, top 20 insights)
+   ↓
+7. Next execution benefits from learnings
+```
+
+**Memory Components:**
+- **Reflections**: Last 5 execution reflections (sliding window in DynamoDB)
+- **Key Insights**: Top 20 persistent learnings across all executions
+- **Trajectory Summary**: Compressed history of previous attempt
+- **Evaluation Scores**: Task completion, code quality, efficiency metrics
 
 ### Agentic Execution Loop
 
@@ -95,6 +128,84 @@ gemini-2.5-flash-lite → gemini → gpt-4o-mini → sonnet → gpt-4o → opus 
 | DBA | 3 | dba | Database operations |
 | Researcher | 2 | researcher | Code search |
 
+## Advanced Features
+
+### 1. Reflexion Learning Pattern
+
+The bot implements the **Reflexion** pattern, enabling it to learn from past attempts:
+
+**Components:**
+- **Actor**: Execution model with Chain-of-Thought prompting
+- **Evaluator**: Heuristic-based trajectory scoring (task completion, code quality, efficiency)
+- **Self-Reflection**: Opus analyzes what worked/failed and generates strategy changes
+- **Memory**: DynamoDB stores reflections, key insights, and trajectory summaries
+
+**How It Works:**
+1. Before execution, Opus reviews previous reflections and evaluation scores
+2. During execution, the Actor implements with step-by-step reasoning
+3. After execution, the Evaluator scores the trajectory (0-100)
+4. Opus generates a reflection: what worked, what failed, root cause, strategy change, key insight
+5. Reflection is saved with sliding window (last 5) and key insights (top 20)
+6. Next execution benefits from these learnings
+
+### 2. Chain-of-Thought Prompting
+
+All execution models are prompted to think step-by-step:
+
+**Structure:**
+```
+1. Understand the Problem
+2. Break Down into Steps
+3. Consider Edge Cases
+4. Explain Approach
+5. Implement Step-by-Step
+6. Verify Solution
+```
+
+This reduces errors and improves logic by forcing models to articulate their reasoning before acting.
+
+### 3. Per-Thread S3 Artifact Storage
+
+Each Discord thread gets its own isolated workspace:
+
+**Architecture:**
+- **Workspace**: `/workspace/<thread-id>/` in Kubernetes pod
+- **S3 Sync**: `s3://discord-bot-artifacts/threads/<thread-id>/`
+- **Discord Attachments**: Auto-synced to workspace before execution
+- **Model Outputs**: Use `<<filename>>` markers to send files back to Discord
+
+**Workflow:**
+1. User uploads attachment → Auto-synced to workspace
+2. Model reads/writes files in workspace
+3. Model includes `<<src/index.ts>>` in response
+4. System reads file from workspace → Sends as Discord attachment
+5. After execution → Workspace synced to S3
+6. Thread deleted → Workspace + S3 prefix cleaned up
+
+### 4. User Feedback Integration
+
+Users directly influence the bot's confidence through reactions:
+
+- **👍 on bot message**: +15 confidence (encourages similar approach)
+- **👎 on bot message**: -20 confidence (triggers reflection/escalation)
+- Confidence clamped 10-100 and persisted across messages
+
+This creates a feedback loop where user satisfaction directly impacts the bot's decision-making.
+
+### 5. Branch Flow (Multi-Solution Brainstorming)
+
+Trigger with phrases like "different approaches", "pros and cons", "explore options":
+
+**Process:**
+1. Two models brainstorm in parallel
+2. Consolidator merges unique approaches
+3. Presents 2-3 architectural options with pros/cons
+4. **No code generation** - purely theoretical/architectural
+
+**Triggers:**
+- "multiple solutions", "brainstorm", "different ways"
+- "compare approaches", "tradeoffs", "which approach"
+
 ## Project Structure
 
 ```
@@ -102,7 +213,7 @@ app/
 ├── src/
 │   ├── modules/
 │   │   ├── agentic/          # Multi-turn execution system
-│   │   │   ├── loop.ts       # Main execution loop
+│   │   │   ├── loop.ts       # Main execution loop with CoT
 │   │   │   ├── lock.ts       # Thread-safe locks
 │   │   │   ├── escalation.ts # Model escalation
 │   │   │   ├── progress.ts   # Discord progress streaming
@@ -110,27 +221,41 @@ app/
 │   │   │   ├── logging.ts    # DynamoDB logging
 │   │   │   ├── events.ts     # SQS event emission
 │   │   │   └── README.md     # Module documentation
-│   │   ├── discord/          # Discord client
+│   │   ├── reflexion/        # Reflexion learning pattern
+│   │   │   ├── evaluator.ts  # Trajectory evaluation
+│   │   │   ├── memory.ts     # Reflection management
+│   │   │   └── types.ts      # Reflexion interfaces
+│   │   ├── workspace/        # Per-thread S3 artifact storage
+│   │   │   ├── manager.ts    # Workspace operations
+│   │   │   ├── s3-sync.ts    # S3 synchronization
+│   │   │   └── file-sync.ts  # Discord attachment sync
+│   │   ├── discord/          # Discord client with partials
 │   │   ├── litellm/          # LLM integration
 │   │   └── dynamodb/         # Database operations
 │   ├── handlers/
 │   │   ├── reactions.ts      # Emoji reaction handler
+│   │   ├── feedback.ts       # User feedback (👍👎)
 │   │   ├── debounce.ts       # Message debouncing
 │   │   └── README.md         # Handler documentation
 │   ├── pipeline/             # Message processing pipeline
-│   ├── templates/            # Prompt templates
-│   │   └── registry.ts       # Model/template mapping
+│   │   └── flows/
+│   │       ├── sequential-thinking.ts  # Reflexion flow
+│   │       ├── branch.ts               # Multi-solution brainstorming
+│   │       ├── simple.ts               # Quick responses
+│   │       └── breakglass.ts           # Emergency override
+│   ├── templates/            # Prompt templates with CoT
+│   │   ├── planning.txt      # Opus planning with reflection
+│   │   └── prompts/
+│   │       ├── coding.txt    # CoT for implementation
+│   │       ├── devops.txt
+│   │       ├── architect.txt
+│   │       └── ...
 │   └── index.ts              # Application entry point
-├── templates/                # Prompt template files
-│   └── prompts/
-│       ├── coding.txt
-│       ├── devops.txt
-│       ├── architect.txt
-│       └── ...
 └── package.json
 
 terraform/
-├── dynamodb.tf               # Sessions + Executions tables
+├── dynamodb.tf               # Sessions + Executions tables (with Reflexion fields)
+├── s3.tf                     # Artifact storage bucket
 ├── sqs.tf                    # Message + Event queues
 ├── kubernetes.tf             # K8s deployments
 ├── main.tf                   # Provider config
@@ -172,6 +297,7 @@ AWS_REGION=ca-central-1
 DYNAMODB_SESSIONS_TABLE=discord_sessions
 DYNAMODB_EXECUTIONS_TABLE=discord_executions
 AGENTIC_EVENTS_QUEUE_URL=https://sqs.region.amazonaws.com/account/queue
+S3_ARTIFACT_BUCKET=discord-bot-artifacts  # Per-thread artifact storage
 ```
 
 3. **Run locally:**

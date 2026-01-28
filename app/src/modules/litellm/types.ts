@@ -93,9 +93,8 @@ export enum AgentRole {
 
 export enum FlowType {
   SIMPLE = 'simple',
-  TECHNICAL_SIMPLE = 'technical-simple',
-  TECHNICAL = 'technical',
-  AGENTIC = 'agentic',
+  SEQUENTIAL_THINKING = 'sequential-thinking',
+  BRANCH = 'branch',
   BREAKGLASS = 'breakglass',
 }
 
@@ -181,6 +180,13 @@ export interface PlanningResult {
     score: number;
     reasoning: string;
   };
+  reflection?: {
+    what_worked: string;
+    what_failed: string;
+    root_cause: string;
+    strategy_change: string;
+    key_insight: string;
+  };
 }
 
 export interface ShouldRespondContext {
@@ -198,6 +204,20 @@ export interface PlanningContext {
   history: string;
   message: string;
   attachments: string;
+  user_added_files?: string;
+  previous_confidence?: number;
+  workspace_path?: string;
+
+  // Reflexion context
+  trajectory_summary?: string;
+  prev_score?: string;
+  prev_task_completion?: string;
+  prev_code_quality?: string;
+  prev_efficiency?: string;
+  prev_issues?: string;
+  prev_suggestions?: string;
+  reflections?: string;
+  key_insights?: string;
 }
 
 export interface McpTool {

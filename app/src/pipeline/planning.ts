@@ -3,6 +3,12 @@ import { createLogger } from '../utils/logger';
 import type { Session } from '../modules/dynamodb/types';
 import type { PlanningResult } from '../modules/litellm/types';
 import type { FormattedHistory, ProcessedAttachment } from './types';
+import type { TrajectoryEvaluation } from '../modules/reflexion/types';
+import {
+  formatReflectionsForPrompt,
+  formatKeyInsightsForPrompt,
+  formatEvaluationForPrompt,
+} from '../modules/reflexion/memory';
 
 const log = createLogger('PLANNING');
 
@@ -12,6 +18,9 @@ export interface PlanningInput {
   session: Session;
   history: FormattedHistory;
   processedAttachments: ProcessedAttachment[];
+  userAddedFilesMessage?: string;
+  previousConfidence?: number;
+  previousEvaluation?: TrajectoryEvaluation | null; // NEW: Reflexion
 }
 
 export async function createPlan(input: PlanningInput): Promise<PlanningResult> {
@@ -22,7 +31,12 @@ export async function createPlan(input: PlanningInput): Promise<PlanningResult> 
     .map((a) => a.filename)
     .join(', ') || 'None';
 
-  log.info(`Calling Opus for planning`);
+  // Format Reflexion context
+  const evalContext = formatEvaluationForPrompt(input.previousEvaluation || null);
+  const reflections = formatReflectionsForPrompt(input.session.reflections);
+  const keyInsights = formatKeyInsightsForPrompt(input.session.key_insights);
+
+  log.info(`Calling Opus for planning (with Reflexion context)`);
 
   const result = await generatePlan(
     {
@@ -32,6 +46,15 @@ export async function createPlan(input: PlanningInput): Promise<PlanningResult> 
       history: input.history.formatted_history,
       message: input.history.current_message,
       attachments: attachmentNames,
+      user_added_files: input.userAddedFilesMessage || '',
+      previous_confidence: input.previousConfidence || 0,
+      workspace_path: input.session.workspace_path || `/workspace/${input.threadId}`,
+
+      // Reflexion context
+      trajectory_summary: input.session.last_trajectory_summary || 'No previous execution.',
+      ...evalContext,
+      reflections,
+      key_insights: keyInsights,
     },
     input.threadId
   );
@@ -41,6 +64,9 @@ export async function createPlan(input: PlanningInput): Promise<PlanningResult> 
   log.info(`  is_new_topic: ${result.is_new_topic}`);
   log.info(`  confidence_score: ${result.confidence_assessment.score}`);
   log.info(`  has_progress: ${result.confidence_assessment.has_progress}`);
+  if (result.reflection) {
+    log.info(`  reflection_key_insight: ${result.reflection.key_insight}`);
+  }
   log.info(`Reformulated prompt length: ${result.reformulated_prompt.length}`);
 
   return result;

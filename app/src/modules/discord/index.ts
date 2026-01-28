@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits } from 'discord.js';
+import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import { getConfig } from '../../config/index';
 import { createLogger } from '../../utils/logger';
 import { setupEventHandlers, type MessageHandler } from './events';
@@ -16,6 +16,11 @@ export function createDiscordClient(): Client {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.GuildMessageReactions, // Required for reaction handling
+    ],
+    partials: [
+      Partials.Message,
+      Partials.Channel,
+      Partials.Reaction,
     ],
   });
 

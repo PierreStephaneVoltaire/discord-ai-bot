@@ -1,4 +1,4 @@
-import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { getDynamoDBClient } from './index';
 import { getConfig } from '../../config/index';
 import { createLogger } from '../../utils/logger';
@@ -93,15 +93,44 @@ export async function getOrCreateSession(threadId: string, branchName: string): 
       branch_name: branchName,
       topic_summary: '',
       has_progress: false,
-      confidence_score: 50,
+      confidence_score: 80, // Default to 80 as per initial requirement
       last_discord_timestamp: new Date().toISOString(),
       last_message: '',
       created_at: new Date().toISOString(),
       sub_topics: {},
+      workspace_path: `/workspace/${threadId}`,
+      s3_prefix: `s3://discord-bot-artifacts/threads/${threadId}/`,
+      synced_files: [],
     };
 
     await createSession(session);
   }
 
   return session;
+}
+
+export async function updateSessionConfidence(
+  threadId: string,
+  adjustment: number
+): Promise<void> {
+  const session = await getSession(threadId);
+  if (!session) return;
+
+  const currentScore = session.confidence_score || 50;
+  const newScore = Math.min(100, Math.max(10, currentScore + adjustment));
+
+  log.info(`Updating confidence for thread ${threadId}: ${currentScore} -> ${newScore} (adj: ${adjustment})`);
+
+  await updateSession(threadId, { confidence_score: newScore });
+}
+
+export async function deleteSession(threadId: string): Promise<void> {
+  log.info(`Deleting session from DynamoDB: ${threadId}`);
+  const client = getDynamoDBClient();
+  const config = getConfig();
+
+  await client.send(new DeleteCommand({
+    TableName: config.DYNAMODB_SESSIONS_TABLE,
+    Key: { thread_id: threadId },
+  }));
 }

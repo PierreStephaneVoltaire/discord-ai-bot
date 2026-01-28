@@ -1,8 +1,7 @@
 import {
   executeTask as geminiExecuteTask,
   executeSimpleTask,
-  determinePromptCategory,
-} from '../modules/litellm/gemini';
+} from '../modules/litellm/executor';
 import { loadPrompt } from '../templates/loader';
 import { getTemplateForAgent, getPromptForTaskType, getModelForTaskType, getModelForAgent } from '../templates/registry';
 import { createLogger } from '../utils/logger';
@@ -23,7 +22,7 @@ export interface SimpleExecuteInput {
   threadId: string;
   history: FormattedHistory;
   isTechnical: boolean;
-  taskType?: TaskType;
+  taskType: TaskType;
 }
 
 export interface TechnicalSimpleExecuteInput {
@@ -132,20 +131,11 @@ export async function executeSimple(
   input: SimpleExecuteInput
 ): Promise<{ response: string; model: string }> {
   log.info(`Starting simple execution for thread ${input.threadId}`);
-  log.info(`Task type: ${input.taskType || 'undefined'}`);
+  log.info(`Task type: ${input.taskType}`);
 
-  let promptCategory: string;
-  let model: string;
-  
-  // Use task type mapping if available
-  if (input.taskType) {
-    promptCategory = getPromptForTaskType(input.taskType);
-    model = getModelForTaskType(input.taskType);
-  } else {
-    // Fallback to old behavior
-    promptCategory = determinePromptCategory(input.isTechnical);
-    model = 'general';
-  }
+  // Get template and model from registry based on task type
+  const promptCategory = getPromptForTaskType(input.taskType);
+  const model = getModelForTaskType(input.taskType);
   
   log.info(`Using prompt category: ${promptCategory}, model: ${model}`);
 

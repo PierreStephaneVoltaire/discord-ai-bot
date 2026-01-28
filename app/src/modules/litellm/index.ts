@@ -105,51 +105,6 @@ export async function getTools(): Promise<Tool[]> {
   }
 }
 
-export async function executeToolCall(toolCall: ToolCall): Promise<unknown> {
-  const config = getConfig();
-  const url = `${config.LITELLM_BASE_URL}/mcp`;
-
-  log.info(`Executing tool: ${toolCall.function.name}`);
-
-  try {
-    // Parse arguments if they're a string
-    const args = typeof toolCall.function.arguments === 'string'
-      ? JSON.parse(toolCall.function.arguments)
-      : toolCall.function.arguments;
-
-    const response = await request(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.LITELLM_API_KEY}`,
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'tools/call',
-        params: {
-          name: toolCall.function.name,
-          arguments: args,
-        },
-        id: 2,
-      }),
-    });
-
-    if (response.statusCode !== 200) {
-      const errorText = await response.body.text();
-      log.error(`Tool execution failed: ${response.statusCode}`, { error: errorText });
-      throw new Error(`Tool execution failed: ${response.statusCode} - ${errorText}`);
-    }
-
-    const data = (await response.body.json()) as { result: unknown };
-    log.info(`Tool ${toolCall.function.name} executed successfully`);
-    
-    return data.result;
-  } catch (error) {
-    log.error(`Error executing tool ${toolCall.function.name}`, { error });
-    throw error;
-  }
-}
-
 export async function chatCompletion(
   requestBody: ChatCompletionRequest
 ): Promise<ChatCompletionResponse> {
@@ -203,5 +158,5 @@ export function extractJsonFromContent<T>(content: string): T | null {
 }
 
 export * from './opus';
-export * from './gemini';
+export * from './executor';
 export * from './types';

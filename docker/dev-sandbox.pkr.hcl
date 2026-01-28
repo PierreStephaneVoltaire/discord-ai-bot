@@ -16,12 +16,6 @@ variable "image_tag" {
   default = "latest"
 }
 
-variable "codecommit_repo" {
-  type        = string
-  description = "CodeCommit repository URL (e.g., https://git-codecommit.us-east-1.amazonaws.com/v1/repos/my-repo)"
-  default     = ""
-}
-
 source "docker" "dev_sandbox" {
   image    = "public.ecr.aws/ubuntu/ubuntu:24.04"
   commit   = true
@@ -30,7 +24,6 @@ source "docker" "dev_sandbox" {
     "WORKDIR /workspace",
     "ENV PATH=/usr/local/bin:/root/.local/bin:$PATH",
     "ENV NVM_DIR=/root/.nvm",
-    "ENV CODECOMMIT_REPO=${var.codecommit_repo}",
   ]
 }
 

@@ -41,6 +41,51 @@ resource "kubernetes_secret" "ecr_registry" {
   }
 }
 
+resource "kubernetes_service_account" "discord_bot" {
+  metadata {
+    name      = "discord-bot"
+    namespace = kubernetes_namespace.discord_bot.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "pod_exec" {
+  metadata {
+    name      = "pod-exec"
+    namespace = kubernetes_namespace.discord_bot.metadata[0].name
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["pods", "pods/exec"]
+    verbs      = ["get", "list", "create"]
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["pods/log"]
+    verbs      = ["get"]
+  }
+}
+
+resource "kubernetes_role_binding" "discord_bot_exec" {
+  metadata {
+    name      = "discord-bot-exec"
+    namespace = kubernetes_namespace.discord_bot.metadata[0].name
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.pod_exec.metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.discord_bot.metadata[0].name
+    namespace = kubernetes_namespace.discord_bot.metadata[0].name
+  }
+}
+
 resource "kubernetes_deployment" "discord_bot" {
   metadata {
     name      = "discord-bot"
@@ -67,6 +112,8 @@ resource "kubernetes_deployment" "discord_bot" {
       }
 
       spec {
+        service_account_name = kubernetes_service_account.discord_bot.metadata[0].name
+
         image_pull_secrets {
           name = kubernetes_secret.ecr_registry.metadata[0].name
         }
@@ -171,6 +218,11 @@ resource "kubernetes_deployment" "discord_bot" {
             value = "3000"
           }
 
+          env {
+            name  = "S3_ARTIFACT_BUCKET"
+            value = var.s3_artifact_bucket
+          }
+
           liveness_probe {
             http_get {
               path = "/health"
@@ -202,6 +254,7 @@ resource "kubernetes_deployment" "discord_bot" {
 
   depends_on = [null_resource.packer_build]
 }
+
 
 resource "kubernetes_service_account" "sandbox" {
   metadata {
@@ -273,38 +326,25 @@ resource "kubernetes_deployment" "dev_sandbox" {
         }
 
         init_container {
-          name  = "git-init"
-          image = "public.ecr.aws/docker/library/node:20-alpine"
+          name  = "s3-sync-init"
+          image = "amazon/aws-cli:latest"
           
           command = ["/bin/sh", "-c"]
           args = [<<-EOF
-apk add --no-cache git aws-cli
-git config --global credential.helper '!aws codecommit credential-helper $@'
-git config --global credential.UseHttpPath true
-git config --global user.email "system@barelycompetent.xyz"
-git config --global user.name "bot"
+# Create workspace directory
+mkdir -p /workspace
 
-cd /workspace
-
-if [ -n "$CODECOMMIT_REPO" ]; then
-  if git clone "$CODECOMMIT_REPO" . 2>/dev/null; then
-    echo "Repository cloned successfully"
-    if ! git rev-parse HEAD >/dev/null 2>&1; then
-      git checkout -b main
-      git commit --allow-empty -m "Initial commit"
-      git push -u origin main
-    fi
-  else
-    echo "Clone failed, initializing new repository..."
-    git init
-    git remote add origin "$CODECOMMIT_REPO"
-    git checkout -b main
-    git commit --allow-empty -m "Initial commit"
-    git push -u origin main 2>/dev/null || echo "Warning: Could not push to remote"
-  fi
+# Check if THREAD_ID is set (for per-thread workspaces)
+if [ -n "$THREAD_ID" ]; then
+  echo "Syncing workspace from S3 for thread: $THREAD_ID"
+  # Sync from S3 if exists (ignore errors if no previous state)
+  aws s3 sync s3://${aws_s3_bucket.artifacts.id}/threads/$THREAD_ID/ /workspace/ --region $AWS_REGION || echo "No previous workspace state found"
 else
-  echo "No CODECOMMIT_REPO set, skipping repository setup"
+  echo "No THREAD_ID set, starting with empty workspace"
 fi
+
+echo "Workspace initialization complete"
+ls -la /workspace/
 EOF
           ]
           
@@ -314,12 +354,16 @@ EOF
           }
           
           env {
-            name  = "CODECOMMIT_REPO"
-            value = data.aws_codecommit_repository.repo.clone_url_http
-          }
-          env {
             name  = "AWS_REGION"
             value = var.region
+          }
+          env {
+            name  = "S3_ARTIFACT_BUCKET"
+            value = aws_s3_bucket.artifacts.id
+          }
+          env {
+            name = "THREAD_ID"
+            value = ""  # Will be set dynamically by workspace manager
           }
           env {
             name = "AWS_ACCESS_KEY_ID"
@@ -403,66 +447,7 @@ EOF
         }
 
         
-        container {
-          name              = "mcp-git"
-          image             = "public.ecr.aws/docker/library/node:20-alpine"
-          image_pull_policy = "Always"
-          
-          command = ["sh", "-c"]
-          args = ["apk add --no-cache git python3 py3-pip && pip3 install --break-system-packages uv && npx -y supergateway --port 8778 --stdio 'uvx mcp-server-git --repository /workspace'"]
 
-          port {
-            container_port = 8778
-            name           = "mcp-git"
-          }
-
-          liveness_probe {
-            tcp_socket {
-              port = 8778
-            }
-            initial_delay_seconds = 15
-            period_seconds        = 10
-          }
-
-          volume_mount {
-            name       = "workspace"
-            mount_path = "/workspace"
-                        read_only = false
-
-          }
-
-          env {
-            name  = "AWS_REGION"
-            value = var.region
-          }
-          env {
-            name = "AWS_ACCESS_KEY_ID"
-            value_from {
-              secret_key_ref {
-                name = kubernetes_secret.discord_bot_secrets.metadata[0].name
-                key  = "AWS_ACCESS_KEY_ID"
-              }
-            }
-          }
-          env {
-            name = "AWS_SECRET_ACCESS_KEY"
-            value_from {
-              secret_key_ref {
-                name = kubernetes_secret.discord_bot_secrets.metadata[0].name
-                key  = "AWS_SECRET_ACCESS_KEY"
-              }
-            }
-          }
-
-            resources {
-            requests = {
-              memory = "256Mi"
-            }
-            limits = {
-              memory = "512Mi"
-            }
-          }
-        }
 
         container {
           name              = "mcp-shell"
@@ -553,25 +538,7 @@ resource "kubernetes_service" "mcp_filesystem" {
   }
 }
 
-resource "kubernetes_service" "mcp_git" {
-  metadata {
-    name      = "git-service"
-    namespace = kubernetes_namespace.discord_bot.metadata[0].name
-  }
-  spec {
-    type = "ClusterIP"
 
-    selector = {
-      app = "dev-sandbox"
-    }
-    port {
-      name        = "mcp-http"
-      protocol    = "TCP"
-      port        = 8778
-      target_port = 8778
-    }
-  }
-}
 
 resource "kubernetes_service" "mcp_shell" {
   metadata {

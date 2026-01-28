@@ -13,18 +13,19 @@ import { detectThread, shouldProcess } from './thread';
 import { formatHistory } from './history';
 import { checkShouldRespond } from './should-respond';
 import { classifyFlow } from './classify';
-import { setupSession, updateSessionAfterExecution } from './session';
-import { processAttachments } from './attachments';
-import { createPlan } from './planning';
-import { executeTechnicalTask, executeSimple, executeTechnicalSimple, executeBreakglass } from './execute';
 import { formatAndSendResponse } from './response';
-import { executeAgenticLoop } from '../modules/agentic/loop';
-import { getMaxTurns, getCheckpointInterval, getModelForAgent } from '../templates/registry';
-import { generateThreadName } from '../modules/litellm/opus';
-import { getDiscordClient, createThread } from '../modules/discord/index';
-import { hasActiveLock } from '../modules/agentic/lock';
-import { debounceMessage } from '../handlers/debounce';
-import type { PipelineContext, PipelineResult } from './types';
+import {
+  executeBreakglassFlow,
+  executeSequentialThinkingFlow, // Renamed from agentic
+  executeBranchFlow,             // NEW
+  executeSimpleFlow,
+  type FlowContext,
+} from './flows';
+import type { PipelineResult } from './types';
+import { FlowType } from '../modules/litellm/types';
+import { s3Sync } from '../modules/workspace/s3-sync';
+import { discordFileSync } from '../modules/workspace/file-sync';
+import { getDiscordClient } from '../modules/discord/index';
 
 const log = createLogger('PIPELINE');
 
@@ -41,6 +42,7 @@ export async function processMessage(
   log.info(`Channel: ${message.channel_id}`);
 
   try {
+    // Phase 1: Pre-processing
     log.info('Phase: FILTER');
     const filterResult = filterMessage(message);
 
@@ -87,239 +89,83 @@ export async function processMessage(
       };
     }
 
+    // Phase: WORKSPACE_SYNC (Inbound)
+    log.info('Phase: WORKSPACE_SYNC');
+    const client = getDiscordClient();
+
+    // 1. Restore from S3 to workspace
+    await s3Sync.syncFromS3(threadId);
+
+    // 2. Sync latest attachments from Discord to workspace
+    const syncResult = await discordFileSync.syncToWorkspace(client, threadId);
+    const newFilesMessage = discordFileSync.getNewFilesMessage(syncResult);
+
     await markExecutionProcessing(executionId);
 
-    // Check for breakglass flow
+    // Build flow context
+    const flowContext: FlowContext = {
+      threadId,
+      channelId: thread.channel_id,
+      messageId: message.id,
+      history,
+      filterContext: filterResult.context,
+      isThread: thread.is_thread,
+      executionId,
+      userAddedFilesMessage: newFilesMessage, // Pass to flows
+    };
+
+    // Phase 2: Route to appropriate flow
+    let flowResult;
+
     if (filterResult.context.is_breakglass && filterResult.context.breakglass_model) {
-      log.info('Phase: BREAKGLASS_FLOW');
-      log.info(`Breakglass model: ${filterResult.context.breakglass_model}`);
-
-      const result = await executeBreakglass({
-        threadId,
-        modelName: filterResult.context.breakglass_model,
-        history,
-      });
-
-      await updateExecution(executionId, {
-        gemini_response: { response_length: result.response.length },
-      });
-
-      log.info('Phase: SEND_RESPONSE');
-      await formatAndSendResponse({
-        response: result.response,
-        channelId: thread.thread_id || thread.channel_id,
-        branchName: undefined, // No branch for breakglass
-      });
-
-      await markExecutionCompleted(executionId, result.model);
-
-      const elapsed = Date.now() - startTime;
-      log.info('========== END PROCESSING (BREAKGLASS) ==========');
-      log.info(`Total processing time: ${elapsed}ms`);
-
-      return {
-        success: true,
-        execution_id: executionId,
-        responded: true,
-      };
-    }
-
-    log.info('Phase: CLASSIFY');
-    const flowType = classifyFlow(
-      respondDecision.is_technical,
-      respondDecision.task_type,
-      false // use_agentic_loop will be determined in planning phase
-    );
-
-    let response: string;
-    let modelUsed: string;
-    let branchName: string | undefined;
-    let responseChannelId = thread.thread_id || thread.channel_id;
-
-    if (flowType === 'agentic') {
-      // AGENTIC FLOW - Multi-turn execution
-      log.info('Phase: AGENTIC_FLOW');
-      
-      // Create thread if not already in one
-      let finalThreadId = threadId;
-      if (!thread.is_thread) {
-        log.info('Creating thread for agentic execution');
-        const threadName = await generateThreadName(history.current_message);
-        const client = getDiscordClient();
-        const newThread = await createThread(
-          client,
-          message.channel_id,
-          message.id,
-          threadName
-        );
-        finalThreadId = newThread.id;
-        responseChannelId = newThread.id;
-      }
-
-      // Setup session
-      const sessionResult = await setupSession(finalThreadId, thread.channel_id);
-      branchName = sessionResult.branchName;
-
-      // Process attachments
-      const processedAttachments = await processAttachments(
-        history.current_attachments,
-        !filterResult.context.is_secondary_bot
-      );
-
-      // Generate plan
-      const planning = await createPlan({
-        threadId: finalThreadId,
-        branchName: sessionResult.branchName,
-        session: sessionResult.session,
-        history,
-        processedAttachments,
-      });
-
-      // Execute agentic loop
-      const maxTurns = getMaxTurns(
-        planning.complexity,
-        planning.estimated_turns
-      );
-
-      const agenticResult = await executeAgenticLoop(
-        {
-          maxTurns,
-          currentTurn: 0,
-          model: getModelForAgent(planning.agent_role),
-          agentRole: planning.agent_role,
-          tools: [], // Tools loaded inside loop
-          checkpointInterval: getCheckpointInterval(planning.complexity),
-        },
-        planning.reformulated_prompt,
-        finalThreadId
-      );
-
-      response = agenticResult.finalResponse;
-      modelUsed = 'agentic';
-
-      // Update session
-      await updateSessionAfterExecution(
-        finalThreadId,
-        planning,
-        history.current_message,
-        message.timestamp,
-        sessionResult.session
-      );
-    } else if (flowType === 'technical-simple') {
-      // TECHNICAL_SIMPLE FLOW - Single turn, no planning
-      log.info('Phase: TECHNICAL_SIMPLE_FLOW');
-
-      const result = await executeTechnicalSimple({
-        threadId,
-        history,
-        taskType: respondDecision.task_type,
-      });
-
-      response = result.response;
-      modelUsed = result.model;
-    } else if (flowType === 'technical') {
-      // TECHNICAL FLOW - Single turn with planning
-      log.info('Phase: TECHNICAL_FLOW');
-      // If technical but not in a thread, create one first
-      let finalThreadId = threadId;
-      if (!thread.is_thread) {
-        log.info('Phase: CREATE_THREAD');
-        log.info('Technical message not in thread, creating one');
-
-        const threadName = await generateThreadName(history.current_message);
-        log.info(`Generated thread name: ${threadName}`);
-
-        const client = getDiscordClient();
-        const newThread = await createThread(
-          client,
-          message.channel_id,
-          message.id,
-          threadName
-        );
-
-        finalThreadId = newThread.id;
-        responseChannelId = newThread.id;
-        log.info(`Created thread: ${finalThreadId}`);
-      }
-
-      log.info('Phase: SESSION_SETUP');
-      const sessionResult = await setupSession(finalThreadId, thread.channel_id);
-      branchName = sessionResult.branchName;
-
-      log.info('Phase: ATTACHMENTS');
-      const processedAttachments = await processAttachments(
-        history.current_attachments,
-      !filterResult.context.is_secondary_bot
-      );
-
-      await updateExecution(executionId, {
-        input_context: {
-          thread_id: finalThreadId,
-          branch_name: branchName,
-          message_content: history.current_message,
-          attachment_count: processedAttachments.length,
-        },
-      });
-
-      log.info('Phase: PLANNING');
-      const planning = await createPlan({
-        threadId: finalThreadId,
-        branchName: sessionResult.branchName,
-        session: sessionResult.session,
-        history,
-        processedAttachments,
-      });
-
-      await updateExecution(executionId, {
-        opus_response: planning as unknown as Record<string, unknown>,
-      });
-
-      log.info('Phase: EXECUTE_TECHNICAL');
-      const result = await executeTechnicalTask({
-        threadId: finalThreadId,
-        branchName: sessionResult.branchName,
-        planning,
-        history,
-        processedAttachments,
-      });
-
-      response = result.response;
-      modelUsed = result.model;
-
-      log.info('Phase: UPDATE_SESSION');
-      await updateSessionAfterExecution(
-        finalThreadId,
-        planning,
-        history.current_message,
-        message.timestamp,
-        sessionResult.session
+      flowResult = await executeBreakglassFlow(
+        flowContext,
+        filterResult.context.breakglass_model
       );
     } else {
-      // SIMPLE FLOW - Non-technical conversation
-      log.info('Phase: SIMPLE_FLOW');
-      const result = await executeSimple({
-        threadId,
-        history,
-        isTechnical: false,
-        taskType: respondDecision.task_type,
-      });
+      log.info('Phase: CLASSIFY');
+      const flowType = classifyFlow(
+        respondDecision.is_technical,
+        respondDecision.task_type,
+        false,
+        filterResult.context,
+        message.content
+      );
 
-      response = result.response;
-      modelUsed = result.model;
+      switch (flowType) {
+        case FlowType.SEQUENTIAL_THINKING:
+          flowResult = await executeSequentialThinkingFlow(flowContext, message);
+          break;
+        case FlowType.BRANCH:
+          flowResult = await executeBranchFlow(flowContext);
+          break;
+        case FlowType.SIMPLE:
+        default:
+          flowResult = await executeSimpleFlow(
+            flowContext,
+            respondDecision.task_type
+          );
+          break;
+      }
     }
 
+    // Phase 3: Post-processing
     await updateExecution(executionId, {
-      gemini_response: { response_length: response.length },
+      gemini_response: { response_length: flowResult.response.length },
     });
+
+    // Phase: S3_SYNC (Outbound)
+    log.info('Phase: S3_SYNC');
+    await s3Sync.syncToS3(threadId);
 
     log.info('Phase: SEND_RESPONSE');
     await formatAndSendResponse({
-      response,
-      channelId: responseChannelId,
-      branchName,
+      response: flowResult.response,
+      channelId: flowResult.responseChannelId,
+      threadId: threadId,
     });
 
-    await markExecutionCompleted(executionId, modelUsed);
+    await markExecutionCompleted(executionId, flowResult.model);
 
     const elapsed = Date.now() - startTime;
     log.info('========== END PROCESSING ==========');

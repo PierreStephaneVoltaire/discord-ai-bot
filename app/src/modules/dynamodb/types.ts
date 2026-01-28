@@ -4,6 +4,16 @@ export interface SubTopic {
   status: 'pending' | 'in_progress' | 'completed';
 }
 
+export interface Reflection {
+  timestamp: string;
+  score: number;
+  what_worked: string;
+  what_failed: string;
+  root_cause: string;
+  strategy_change: string;
+  key_insight: string;
+}
+
 export interface Session {
   thread_id: string;
   branch_name: string;
@@ -14,6 +24,17 @@ export interface Session {
   last_message: string;
   created_at: string;
   sub_topics: Record<string, SubTopic>;
+
+  // NEW: Workspace & S3 fields
+  workspace_path?: string;
+  s3_prefix?: string;
+  synced_files?: string[];
+  current_plan?: string;
+
+  // NEW: Reflexion fields
+  reflections?: Reflection[];           // Last N reflections (sliding window)
+  key_insights?: string[];              // Persistent learnings
+  last_trajectory_summary?: string;     // Summary of previous execution
 }
 
 export interface Execution {
@@ -38,6 +59,17 @@ export interface SessionUpdate {
   last_discord_timestamp?: string;
   last_message?: string;
   sub_topics?: Record<string, SubTopic>;
+
+  // NEW: Workspace & S3 fields
+  workspace_path?: string;
+  s3_prefix?: string;
+  synced_files?: string[];
+  current_plan?: string;
+
+  // NEW: Reflexion fields
+  reflections?: Reflection[];
+  key_insights?: string[];
+  last_trajectory_summary?: string;
 }
 
 export interface ExecutionUpdate {

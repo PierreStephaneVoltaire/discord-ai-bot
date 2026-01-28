@@ -21,74 +21,79 @@ export function shouldSkipPlanning(taskType: TaskType): boolean {
 }
 
 /**
- * Tasks that need MCP tools and session but can skip planning
- * These go through TECHNICAL flow but with skip_planning flag
+ * Tasks that need full sequential thinking (session + tools + planning)
  */
-export function needsToolsButSkipsPlanning(taskType: TaskType): boolean {
-  const toolTasksNoPlan = new Set([
+export function needsSequentialThinking(taskType: TaskType): boolean {
+  const sequentialTasks = new Set([
+    TaskType.CODING_IMPLEMENTATION,
+    TaskType.DEVOPS_IMPLEMENTATION,
+    TaskType.DATABASE_DESIGN,
+    TaskType.CODE_REVIEW,
+    TaskType.DOCUMENTATION_WRITER,
     TaskType.TOOL_EXECUTION,
     TaskType.COMMAND_RUNNER,
     TaskType.TEST_RUNNER,
   ]);
 
-  return toolTasksNoPlan.has(taskType);
+  return sequentialTasks.has(taskType);
 }
 
-/**
- * Tasks that need full technical flow (session + tools + planning)
- */
-export function needsFullTechnicalFlow(taskType: TaskType): boolean {
-  const fullTechnicalTasks = new Set([
-    TaskType.CODING_IMPLEMENTATION,
-    TaskType.DEVOPS_IMPLEMENTATION,
-    TaskType.DATABASE_DESIGN,
-    TaskType.CODE_REVIEW,
-    TaskType.DOCUMENTATION_WRITER, // Needs tools for file creation + git
-  ]);
+export function isBranchRequest(message: string): boolean {
+  const lower = message.toLowerCase();
 
-  return fullTechnicalTasks.has(taskType);
+  // Branch flow triggers: Architectural exploration, multiple approaches, theoretical discussion
+  const branchTriggers = [
+    'multiple solutions',
+    'explore options',
+    'what are my options',
+    'different approaches',
+    'different ways',
+    'brainstorm',
+    'think of alternatives',
+    'alternative approaches',
+    'architectural options',
+    'compare approaches',
+    'pros and cons',
+    'tradeoffs',
+    'trade-offs',
+    'which approach',
+    'explore architectures',
+    'design options',
+  ];
+
+  return branchTriggers.some(trigger => lower.includes(trigger));
 }
 
-export function classifyFlow(isTechnical: boolean, taskType?: TaskType, useAgenticLoop?: boolean, filterContext?: FilterContext): FlowType {
+export function classifyFlow(
+  isTechnical: boolean,
+  taskType?: TaskType,
+  useAgenticLoop?: boolean,
+  filterContext?: FilterContext,
+  message?: string
+): FlowType {
   log.info(`Classification: is_technical=${isTechnical}, task_type=${taskType || 'undefined'}, use_agentic_loop=${useAgenticLoop || false}`);
 
-  // Check for breakglass flow first
+  // 1. Check for breakglass flow
   if (filterContext?.is_breakglass) {
-    log.info(`Routing to: BREAKGLASS flow for model ${filterContext.breakglass_model}`);
+    log.info(`Routing to: BREAKGLASS flow`);
     return FlowType.BREAKGLASS;
   }
 
-  // If no task type provided, infer from is_technical for backward compatibility
+  // 2. Check for branch flow (multi-solution brainstorming)
+  if (message && isBranchRequest(message)) {
+    log.info(`Routing to: BRANCH flow (detected multi-solution request)`);
+    return FlowType.BRANCH;
+  }
+
   const effectiveTaskType = taskType || inferTaskType(isTechnical);
 
-  // Check if agentic loop should be used
-  if (useAgenticLoop) {
-    log.info(`Routing to: AGENTIC flow for ${effectiveTaskType}`);
-    return FlowType.AGENTIC;
+  // 3. Check for sequential thinking (merged agentic + technical)
+  if (useAgenticLoop || needsSequentialThinking(effectiveTaskType)) {
+    log.info(`Routing to: SEQUENTIAL_THINKING flow for ${effectiveTaskType}`);
+    return FlowType.SEQUENTIAL_THINKING;
   }
 
-  // Check if this needs full technical flow (session + tools + planning)
-  if (needsFullTechnicalFlow(effectiveTaskType)) {
-    log.info(`Routing to: TECHNICAL flow for ${effectiveTaskType} (needs session + tools + planning)`);
-    return FlowType.TECHNICAL;
-  }
-
-  // Check if this needs tools but can skip planning
-  if (needsToolsButSkipsPlanning(effectiveTaskType)) {
-    log.info(`Routing to: TECHNICAL flow for ${effectiveTaskType} (needs session + tools, planning skipped)`);
-    return FlowType.TECHNICAL;
-  }
-
-  // Check if planning should be skipped (Q&A, explanations - no tools needed)
-  if (shouldSkipPlanning(effectiveTaskType)) {
-    const flowType = isTechnical ? FlowType.TECHNICAL_SIMPLE : FlowType.SIMPLE;
-    log.info(`Routing to: ${flowType} flow (planning skipped for ${effectiveTaskType})`);
-    return flowType;
-  }
-
-  // Default technical flow with planning
-  const flowType = isTechnical ? FlowType.TECHNICAL : FlowType.SIMPLE;
-  log.info(`Routing to: ${flowType} flow`);
-
-  return flowType;
+  // 4. Default to simple flow
+  log.info(`Routing to: SIMPLE flow for ${effectiveTaskType}`);
+  return FlowType.SIMPLE;
 }

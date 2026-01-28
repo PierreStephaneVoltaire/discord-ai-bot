@@ -1,6 +1,9 @@
-import type { Client, Message } from 'discord.js';
+import type { Client, Message, MessageReaction, User, PartialMessageReaction, PartialUser, ThreadChannel } from 'discord.js';
 import { createLogger } from '../../utils/logger';
 import type { DiscordMessagePayload } from './types';
+import { updateSessionConfidence, deleteSession } from '../dynamodb/sessions';
+import { workspaceManager } from '../workspace/manager';
+import { s3Sync } from '../workspace/s3-sync';
 
 const log = createLogger('DISCORD:EVENT');
 
@@ -16,8 +19,8 @@ export function setupEventHandlers(client: Client, onMessage: MessageHandler): v
 
   client.on('messageCreate', async (message: Message) => {
     log.info(`on_message: ${message.id} in channel ${message.channel.id}`);
-    log.info(`Message content length: ${message.content.length}`);
-    log.info(`Attachments count: ${message.attachments.size}`);
+
+    if (message.author.bot) return;
 
     const payload = messageToPayload(message);
 
@@ -25,6 +28,50 @@ export function setupEventHandlers(client: Client, onMessage: MessageHandler): v
       await onMessage(payload);
     } catch (error) {
       log.error(`Error processing message ${message.id}`, { error: String(error) });
+    }
+  });
+
+  client.on('messageReactionAdd', async (reaction: MessageReaction | PartialMessageReaction, user: User | PartialUser) => {
+    if (user.bot) return;
+
+    // Handle partials
+    if (reaction.partial) {
+      try {
+        await reaction.fetch();
+      } catch (error) {
+        log.error('Something went wrong when fetching the reaction:', { error: String(error) });
+        return;
+      }
+    }
+
+    const threadId = reaction.message.channelId;
+    const emoji = reaction.emoji.name;
+
+    if (emoji === '👍') {
+      log.info(`Positive feedback received for thread ${threadId}`);
+      await updateSessionConfidence(threadId, 15);
+    } else if (emoji === '👎') {
+      log.info(`Negative feedback received for thread ${threadId}`);
+      await updateSessionConfidence(threadId, -20);
+    }
+  });
+
+  client.on('threadDelete', async (thread: ThreadChannel) => {
+    log.info(`Thread deleted: ${thread.id}. Cleaning up resources...`);
+
+    try {
+      // 1. Cleanup Workspace
+      await workspaceManager.deleteWorkspace(thread.id);
+
+      // 2. Cleanup S3
+      await s3Sync.deletePrefix(thread.id);
+
+      // 3. Cleanup DynamoDB
+      await deleteSession(thread.id);
+
+      log.info(`Cleanup completed for thread ${thread.id}`);
+    } catch (err) {
+      log.error(`Cleanup failed for thread ${thread.id}`, { error: String(err) });
     }
   });
 
@@ -59,15 +106,15 @@ function messageToPayload(message: Message): DiscordMessagePayload {
     timestamp: message.createdAt.toISOString(),
     message_reference: message.reference
       ? {
-          channel_id: message.reference.channelId,
-          message_id: message.reference.messageId || '',
-        }
+        channel_id: message.reference.channelId,
+        message_id: message.reference.messageId || '',
+      }
       : undefined,
     thread: message.thread
       ? {
-          id: message.thread.id,
-          name: message.thread.name,
-        }
+        id: message.thread.id,
+        name: message.thread.name,
+      }
       : undefined,
   };
 }

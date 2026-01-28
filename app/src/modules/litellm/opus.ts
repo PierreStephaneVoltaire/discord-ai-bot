@@ -56,7 +56,7 @@ export async function shouldRespond(
   });
 
   const response = await chatCompletion({
-    model: 'claude-opus-4.5',
+    model: 'o4-mini',
     messages: [
       { role: 'system', content: systemPrompt },
       {
@@ -106,6 +106,8 @@ export async function generatePlan(
     history: context.history,
     message: context.message,
     attachments: context.attachments,
+    user_added_files: context.user_added_files || '',
+    previous_confidence: String(context.previous_confidence || 0),
   });
 
   const response = await chatCompletion({
@@ -169,7 +171,7 @@ export async function generateThreadName(content: string): Promise<string> {
   const template = loadTemplate('thread_name');
 
   const response = await chatCompletion({
-    model: 'claude-opus-4.5',
+    model: 'deepseek-v3.2-speciale',
     messages: [
       { role: 'system', content: template },
       { role: 'user', content: content.substring(0, 500) },

@@ -3,7 +3,7 @@ import { loadPrompt } from '../../templates/loader';
 import { createLogger } from '../../utils/logger';
 import type { Tool, ExecuteContext } from './types';
 
-const log = createLogger('LITELLM:GEMINI');
+const log = createLogger('LITELLM:EXECUTOR');
 
 export async function executeTask(
   context: ExecuteContext,
@@ -33,7 +33,7 @@ Use the provided tools to:
   log.info(`Tools provided: ${tools.map(t => t.function.name).join(', ')}`);
 
   const response = await chatCompletion({
-    model: context.model || 'devops',
+    model: context.model || 'gemini-3-pro',
     messages: [
       { role: 'system', content: fullSystemPrompt },
       { role: 'user', content: context.userPrompt },
@@ -75,7 +75,7 @@ export async function executeSimpleTask(
   }
 
   const response = await chatCompletion({
-    model: model || 'general',
+    model: model || 'gemini-3-pro',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: history },
@@ -93,11 +93,4 @@ export async function executeSimpleTask(
   }
 
   return content || 'No response generated.';
-}
-
-export function determinePromptCategory(isTechnical: boolean, role?: string): string {
-  if (role && ['architect', 'devops', 'coding', 'social', 'writing', 'general'].includes(role)) {
-    return role;
-  }
-  return isTechnical ? 'coding' : 'general';
 }

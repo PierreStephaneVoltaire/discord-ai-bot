@@ -6,48 +6,54 @@ import {
   ToolCall,
   AgentRole,
 } from '../litellm/types';
-import { chatCompletion, getTools, executeToolCall } from '../litellm/index';
+import { chatCompletion, getTools } from '../litellm/index';
 import { calculateConfidence, isStuck } from './confidence';
 import { checkForInterrupts, handleInterrupt, recordInterrupt } from './interrupts';
 import { streamProgressToDiscord, formatClarificationRequest } from './progress';
 import { loadPrompt } from '../../templates/loader';
 import { getTemplateForAgent } from '../../templates/registry';
 import { createLogger } from '../../utils/logger';
-import { 
-  checkEscalationTriggers, 
-  isAtMaxEscalation, 
-  resetEscalationState 
+import {
+  checkEscalationTriggers,
+  isAtMaxEscalation,
+  resetEscalationState
 } from './escalation';
-import { 
-  createLock, 
-  updateLockTurn, 
-  abortLock, 
-  releaseLock, 
-  isAborted 
+import {
+  createLock,
+  updateLockTurn,
+  abortLock,
+  releaseLock,
+  isAborted
 } from './lock';
-import { 
-  logTurnToDb, 
-  logExecutionStart, 
-  logExecutionComplete 
+import {
+  logTurnToDb,
+  logExecutionStart,
+  logExecutionComplete
 } from './logging';
-import { 
-  emitExecutionStarted, 
-  emitTurnCompleted, 
-  emitModelEscalated, 
-  emitExecutionCompleted, 
-  emitExecutionAborted 
+import {
+  emitExecutionStarted,
+  emitTurnCompleted,
+  emitModelEscalated,
+  emitExecutionCompleted,
+  emitExecutionAborted
 } from './events';
 
-const log = createLogger('AGENTIC:LOOP');
+const log = createLogger('SEQUENTIAL:LOOP');
 
-async function getSystemPromptForAgent(agentRole: AgentRole): Promise<string> {
+async function getSystemPromptForAgent(agentRole: AgentRole, workspacePath: string): Promise<string> {
   const templateName = getTemplateForAgent(agentRole);
+  let prompt: string;
   try {
-    return loadPrompt(templateName);
+    prompt = await loadPrompt(templateName);
   } catch (error) {
     log.warn(`Template ${templateName} not found, falling back to 'coding'`);
-    return loadPrompt('coding');
+    prompt = await loadPrompt('coding');
   }
+
+  // Inject workspace context
+  return prompt
+    .replace('{{workspace_path}}', workspacePath)
+    .replace(/Your workspace is at:? [^{\n]*/g, `Your workspace is at: ${workspacePath}`);
 }
 
 function parseTurn(
@@ -85,7 +91,7 @@ function parseTurn(
     toolCalls,
     toolResults,
     response: content,
-    thinking: content, // For Phase 1, thinking is same as response
+    thinking: content,
     confidence,
     status,
     modelUsed: model,
@@ -110,8 +116,9 @@ function updateExecutionState(state: ExecutionState, turn: ExecutionTurn): void 
     /created.*file/i,
     /modified.*file/i,
     /updated.*file/i,
+    /<<.*>>/i, // New file markers
   ];
-  
+
   let hasFileChange = false;
   for (const pattern of fileChangePatterns) {
     if (pattern.test(turn.response)) {
@@ -122,10 +129,10 @@ function updateExecutionState(state: ExecutionState, turn: ExecutionTurn): void 
 
   if (hasFileChange) {
     state.noProgressTurns = 0;
-    // Extract file names if possible
-    const fileMatch = turn.response.match(/(?:wrote|created|modified|updated)\s+([^\s]+)/i);
-    if (fileMatch && !state.fileChanges.includes(fileMatch[1])) {
-      state.fileChanges.push(fileMatch[1]);
+    // Extract file names from markers if possible
+    const markerMatch = turn.response.match(/<<([^>]+)>>/);
+    if (markerMatch && !state.fileChanges.includes(markerMatch[1])) {
+      state.fileChanges.push(markerMatch[1]);
     }
   } else {
     state.noProgressTurns++;
@@ -133,26 +140,24 @@ function updateExecutionState(state: ExecutionState, turn: ExecutionTurn): void 
 }
 
 async function askUserForClarification(
-  threadId: string, 
+  threadId: string,
   state: ExecutionState,
   reason: string
 ): Promise<void> {
   log.warn(`Asking user for clarification in thread ${threadId}: ${reason}`);
-  
+
   const clarificationMessage = formatClarificationRequest(
     reason,
     state.confidenceScore,
     state.turnNumber
   );
-  
+
   await streamProgressToDiscord(threadId, {
     type: 'clarification_request',
     clarificationMessage,
     turnNumber: state.turnNumber,
     confidence: state.confidenceScore,
   });
-  
-  // TODO: Send actual Discord message with reaction options
 }
 
 async function checkpointProgress(
@@ -170,15 +175,16 @@ async function checkpointProgress(
       totalTurns: turns.length,
     },
   });
-  // TODO: Phase 2 - Save checkpoint to DynamoDB or Discord
 }
 
-export async function executeAgenticLoop(
+export async function executeSequentialThinkingLoop(
   config: AgenticExecutionConfig,
   initialPrompt: string,
-  threadId: string
-): Promise<{ success: boolean; finalResponse: string; turns: ExecutionTurn[] }> {
-  log.info(`Starting agentic loop for thread ${threadId} with agent ${config.agentRole}`);
+  threadId: string,
+  initialConfidence: number = 80,
+  workspacePath: string = '/workspace'
+): Promise<{ success: boolean; finalResponse: string; turns: ExecutionTurn[]; finalConfidence: number }> {
+  log.info(`Starting sequential thinking loop for thread ${threadId} (Agent: ${config.agentRole})`);
 
   // Create execution lock
   const lock = createLock(threadId);
@@ -200,7 +206,7 @@ export async function executeAgenticLoop(
 
   const state: ExecutionState = {
     turnNumber: 0,
-    confidenceScore: 80,
+    confidenceScore: initialConfidence,
     lastError: null,
     errorCount: 0,
     sameErrorCount: 0,
@@ -218,9 +224,9 @@ export async function executeAgenticLoop(
 
   // Load MCP tools
   const tools = await getTools();
-  log.info(`Loaded ${tools.length} MCP tools for agentic execution`);
+  log.info(`Loaded ${tools.length} MCP tools for execution`);
 
-  const systemPrompt = await getSystemPromptForAgent(config.agentRole);
+  const systemPrompt = await getSystemPromptForAgent(config.agentRole, workspacePath);
   const conversationHistory: Message[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: initialPrompt },
@@ -229,13 +235,19 @@ export async function executeAgenticLoop(
   while (state.turnNumber < config.maxTurns) {
     state.turnNumber++;
 
+    if (await isAborted(threadId)) {
+      log.info(`Execution aborted via lock for thread ${threadId}`);
+      await emitExecutionAborted({ threadId, reason: 'user_stop' });
+      return { success: false, finalResponse: 'Execution aborted.', turns, finalConfidence: state.confidenceScore };
+    }
+
     // Stream turn start
     await streamProgressToDiscord(threadId, {
       type: 'turn_start',
       turnNumber: state.turnNumber,
       maxTurns: config.maxTurns,
       confidence: state.confidenceScore,
-      model: config.model,
+      model: currentModel,
     });
 
     // Check for interrupts
@@ -243,209 +255,153 @@ export async function executeAgenticLoop(
     if (interrupt) {
       recordInterrupt(state, interrupt);
       const handled = await handleInterrupt(interrupt, state, conversationHistory);
-      
+
       if (handled.action === 'stop') {
         log.info(`Execution stopped by user interrupt`);
         await checkpointProgress(threadId, state, turns);
-        return { success: false, finalResponse: handled.message, turns };
-      } else if (handled.action === 'clarify') {
-        conversationHistory.push({ role: 'user', content: handled.message });
-        continue;
-      } else if (handled.action === 'retry') {
-        log.info('Retrying last turn');
-        continue;
+        return { success: false, finalResponse: handled.message, turns, finalConfidence: state.confidenceScore };
       }
-      // 'continue' action falls through to normal execution
     }
 
-    // Execute turn
     try {
+      log.info(`Turn ${state.turnNumber}: Calling model ${currentModel}`);
       const response = await chatCompletion({
         model: currentModel,
         messages: conversationHistory,
-        tools,
-        tool_choice: 'auto',
+        tools: tools,
       });
 
       const turn = parseTurn(response, state.turnNumber, currentModel);
-      
-      // Execute tool calls if present
-      if (turn.toolCalls.length > 0) {
-        for (const toolCall of turn.toolCalls) {
-          await streamProgressToDiscord(threadId, {
-            type: 'tool_execution',
-            tool: toolCall.function.name,
-            args: toolCall.function.arguments,
-          });
+      turn.input = conversationHistory[conversationHistory.length - 1].content;
 
-          try {
-            // Execute the tool via MCP
-            log.info(`Executing MCP tool: ${toolCall.function.name}`);
-            const toolResult = await executeToolCall(toolCall);
-            
-            turn.toolResults.push({
-              tool: toolCall.function.name,
-              result: toolResult,
-            });
-            
-            log.info(`Tool ${toolCall.function.name} executed successfully`);
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            log.error(`Tool execution failed: ${toolCall.function.name}`, { error: errorMessage });
-            
-            turn.toolResults.push({
-              tool: toolCall.function.name,
-              result: { 
-                error: errorMessage,
-                success: false 
-              },
-            });
-          }
-        }
-      }
-
-      turns.push(turn);
-
-      // Update conversation history with assistant message
-      conversationHistory.push({
-        role: 'assistant',
-        content: turn.response,
-      });
-
-      // Add tool results to conversation if any
-      if (turn.toolResults.length > 0) {
-        conversationHistory.push({
-          role: 'user',
-          content: `Tool results: ${JSON.stringify(turn.toolResults)}`,
-        });
-      }
-
-      // Update state
-      updateExecutionState(state, turn);
-
-      // Calculate confidence
+      // Update persistent score
       state.confidenceScore = calculateConfidence(state, turn);
 
-      // Track consecutive low confidence turns
       if (state.confidenceScore < 30) {
         consecutiveLowConfidenceTurns++;
       } else {
         consecutiveLowConfidenceTurns = 0;
       }
 
-      // Stream turn complete
-      await streamProgressToDiscord(threadId, {
-        type: 'turn_complete',
-        turnNumber: state.turnNumber,
-        confidence: state.confidenceScore,
-        filesModified: state.fileChanges.length,
-        status: turn.status,
+      await updateLockTurn(threadId, state.turnNumber);
+
+      updateExecutionState(state, turn);
+      turns.push(turn);
+
+      // FIX: Fix arguments to log and emit functions
+      await logTurnToDb({
+        threadId,
+        turn: turn.turnNumber,
+        model: turn.modelUsed,
+        agentRole: config.agentRole,
+        confidence: turn.confidence,
+        status: turn.status === 'complete' ? 'complete' : (turn.status === 'stuck' ? 'stuck' : 'continue'),
+        fileChanges: state.fileChanges
       });
 
-      // Check for completion
-      if (turn.status === 'complete') {
-        log.info(`Agentic loop completed successfully at turn ${state.turnNumber}`);
-        return { success: true, finalResponse: turn.response, turns };
-      }
+      await emitTurnCompleted({
+        threadId,
+        turn: turn.turnNumber,
+        confidence: turn.confidence,
+        status: turn.status
+      });
 
-      // Check for escalation triggers
-      const escalationCheck = checkEscalationTriggers(
+      // Check for escalation
+      const escalation = checkEscalationTriggers(
         state,
         turn,
         currentModel,
         consecutiveLowConfidenceTurns
       );
 
-      if (escalationCheck.shouldEscalate) {
-        if (isAtMaxEscalation(currentModel)) {
-          // Already at Opus, ask user for help
-          log.error(`At max escalation (Opus) but still stuck: ${escalationCheck.reason}`);
-          await askUserForClarification(
-            threadId,
-            state,
-            `At maximum model capability but still struggling: ${escalationCheck.reason}`
-          );
-          // Continue anyway, user might provide guidance
-        } else {
-          // Escalate to next model
-          const previousModel = currentModel;
-          currentModel = escalationCheck.suggestedModel!;
-          
-          log.warn(`Escalating from ${previousModel} to ${currentModel}: ${escalationCheck.reason}`);
-          
-          // Record escalation event
-          state.escalations.push({
-            turnNumber: state.turnNumber,
-            fromModel: previousModel,
-            toModel: currentModel,
-            reason: escalationCheck.reason,
-            timestamp: new Date().toISOString(),
-          });
-          
-          await streamProgressToDiscord(threadId, {
-            type: 'escalation',
-            model: previousModel,
-            newModel: currentModel,
-            escalationReason: escalationCheck.reason,
-            turnNumber: state.turnNumber,
-          });
+      if (escalation.shouldEscalate && escalation.suggestedModel) {
+        log.warn(`Escalating to ${escalation.suggestedModel}: ${escalation.reason}`);
 
-          // Reset escalation-related state after escalation
-          resetEscalationState(state);
-          consecutiveLowConfidenceTurns = 0;
-        }
+        const escalationEvent = {
+          turnNumber: state.turnNumber,
+          fromModel: currentModel,
+          toModel: escalation.suggestedModel,
+          reason: escalation.reason,
+          timestamp: new Date().toISOString(),
+        };
+
+        state.escalations.push(escalationEvent);
+        const fromModel = currentModel;
+        currentModel = escalation.suggestedModel;
+        resetEscalationState(state);
+
+        await emitModelEscalated({
+          threadId,
+          from: fromModel,
+          to: currentModel,
+          reason: escalation.reason
+        });
+
+        // Add escalation message to history
+        conversationHistory.push({
+          role: 'system',
+          content: `ESCALATION: Switching to more capable model ${currentModel} due to: ${escalation.reason}`
+        });
+
+        continue;
       }
 
-      // Check if genuinely stuck (low confidence, no escalation possible)
+      // Check if finished
+      if (turn.status === 'complete') {
+        log.info(`Turn ${state.turnNumber}: Model reported task complete`);
+        break;
+      }
+
+      if (turn.status === 'needs_clarification') {
+        await askUserForClarification(threadId, state, turn.response);
+        break;
+      }
+
+      // Check if stuck
       if (isStuck(state.confidenceScore, consecutiveLowConfidenceTurns) && isAtMaxEscalation(currentModel)) {
-        log.error(`Agent is stuck at turn ${state.turnNumber} with Opus model`);
         await askUserForClarification(
           threadId,
           state,
           `Confidence critically low (${state.confidenceScore}%) for ${consecutiveLowConfidenceTurns} turns. Need guidance.`
         );
+        break;
       }
 
-      // Checkpoint every N turns
-      if (state.turnNumber % config.checkpointInterval === 0) {
-        await checkpointProgress(threadId, state, turns);
-      }
+      // Add to history for next turn
+      conversationHistory.push({ role: 'assistant', content: turn.response });
+
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      log.error(`Error in turn ${state.turnNumber}: ${errorMessage}`);
-      
+      log.error(`Error in turn ${state.turnNumber}`, { error: String(error) });
       state.errorCount++;
-      
-      // Check if this is the same error as before
-      if (state.lastError === errorMessage) {
-        state.sameErrorCount++;
-      } else {
-        state.lastError = errorMessage;
-        state.sameErrorCount = 1;
+      state.lastError = String(error);
+
+      if (state.errorCount > 3) {
+        throw new Error(`Execution failed after 3 errors: ${error}`);
       }
-      
-      // Add error to conversation for model to see
-      conversationHistory.push({
-        role: 'user',
-        content: `An error occurred: ${errorMessage}. Please try a different approach.`,
-      });
-      
-      // Stream error to Discord
-      await streamProgressToDiscord(threadId, {
-        type: 'turn_complete',
-        turnNumber: state.turnNumber,
-        confidence: state.confidenceScore,
-        filesModified: state.fileChanges.length,
-        status: 'error',
-      });
+    }
+
+    if (state.turnNumber % config.checkpointInterval === 0) {
+      await checkpointProgress(threadId, state, turns);
     }
   }
 
-  // Max turns reached
-  log.warn(`Max turns (${config.maxTurns}) reached without completion`);
-  return {
-    success: false,
-    finalResponse: `Max turns reached without completion. Completed ${state.fileChanges.length} file changes.`,
-    turns,
-  };
+  const finalResponse = turns[turns.length - 1]?.response || 'Execution finished but no response generated.';
+
+  // FIX: logExecutionComplete arguments
+  await logExecutionComplete({
+    threadId,
+    totalTurns: state.turnNumber,
+    finalStatus: turns[turns.length - 1]?.status || 'unknown',
+    success: turns[turns.length - 1]?.status === 'complete'
+  });
+
+  await emitExecutionCompleted({
+    threadId,
+    totalTurns: state.turnNumber,
+    finalStatus: turns[turns.length - 1]?.status || 'unknown'
+  });
+
+  await releaseLock(threadId);
+
+  return { success: true, finalResponse, turns, finalConfidence: state.confidenceScore };
 }
