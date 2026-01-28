@@ -61,5 +61,5 @@ variable "do_cluster_name" {
 variable "s3_artifact_bucket" {
   description = "S3 bucket for storing per-thread artifacts"
   type        = string
-  default     = "discord-bot-artifacts"
+  default     = "psv-discord-bot-artifacts"
 }

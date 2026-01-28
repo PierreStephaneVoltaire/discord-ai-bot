@@ -6,7 +6,7 @@ resource "aws_s3_bucket" "artifacts" {
     Environment = "Production"
     App         = "discord-bot"
   }
-  
+
   # Allow deletion of non-empty bucket for development ease
   force_destroy = true
 }

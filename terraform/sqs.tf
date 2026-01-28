@@ -13,11 +13,11 @@ resource "aws_sqs_queue" "discord_messages" {
 }
 
 resource "aws_sqs_queue" "discord_messages_dlq" {
-  name                       = "discord-messages-dlq"
-  delay_seconds              = 0
-  max_message_size           = 262144
-  message_retention_seconds  = 1209600 # 14 days
-  receive_wait_time_seconds  = 0
+  name                      = "discord-messages-dlq"
+  delay_seconds             = 0
+  max_message_size          = 262144
+  message_retention_seconds = 1209600 # 14 days
+  receive_wait_time_seconds = 0
 
   tags = {
     Name        = "discord-messages-dlq"

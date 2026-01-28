@@ -2,7 +2,7 @@ import { createLogger } from '../../utils/logger';
 import { setupSession, updateSessionAfterExecution } from '../session';
 import { processAttachments } from '../attachments';
 import { createPlan } from '../planning';
-import { executeAgenticLoop } from '../../modules/agentic/loop';
+import { executeSequentialThinkingLoop } from '../../modules/agentic/loop';
 import { getMaxTurns, getCheckpointInterval, getModelForAgent } from '../../templates/registry';
 import { generateThreadName } from '../../modules/litellm/opus';
 import { getDiscordClient, createThread } from '../../modules/discord/index';
@@ -16,11 +16,11 @@ export async function executeAgenticFlow(
   message: DiscordMessagePayload
 ): Promise<FlowResult> {
   log.info('Phase: AGENTIC_FLOW');
-  
+
   // Create thread if not already in one
   let finalThreadId = context.threadId;
   let responseChannelId = context.threadId;
-  
+
   if (!context.isThread) {
     log.info('Creating thread for agentic execution');
     const threadName = await generateThreadName(context.history.current_message);
@@ -60,7 +60,7 @@ export async function executeAgenticFlow(
     planning.estimated_turns
   );
 
-  const agenticResult = await executeAgenticLoop(
+  const agenticResult = await executeSequentialThinkingLoop(
     {
       maxTurns,
       currentTurn: 0,
