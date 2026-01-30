@@ -22,8 +22,16 @@ export async function formatHistory(
   const client = getDiscordClient();
 
   const channelId = thread.thread_id || thread.channel_id;
-  const messages = await getMessages(client, channelId, 50);
-  log.info(`Fetched ${messages.length} messages`);
+
+  // If we're not in a thread yet (thread_id is null), don't fetch channel history
+  // This prevents context poisoning when creating new threads
+  let messages: Awaited<ReturnType<typeof getMessages>> = [];
+  if (thread.thread_id) {
+    messages = await getMessages(client, channelId, 50);
+    log.info(`Fetched ${messages.length} messages from thread ${thread.thread_id}`);
+  } else {
+    log.info('Not in a thread yet - using empty history for new thread creation');
+  }
 
   const cutoffTime = new Date();
   cutoffTime.setMinutes(cutoffTime.getMinutes() - config.STALENESS_MINUTES);
@@ -34,8 +42,42 @@ export async function formatHistory(
   });
   log.info(`Filtered to last ${config.STALENESS_MINUTES} minutes: ${recentMessages.length} messages`);
 
+  // Filter out status update messages (embeds from the bot that contain progress updates)
+  const isStatusUpdateMessage = (msg: typeof recentMessages[0]): boolean => {
+    // Skip bot messages that are status updates (turn_start, turn_complete, checkpoint, etc.)
+    if (msg.author.bot) {
+      // Check embeds for status update patterns
+      const embeds = (msg as any).embeds || [];
+      for (const embed of embeds) {
+        const title = embed.title || '';
+        const description = embed.description || '';
+
+        // Status update patterns in embed titles/descriptions
+        const statusPatterns = [
+          /🤔 Turn \d+\/\d+/,           // turn_start
+          /Turn \d+ Complete/,          // turn_complete
+          /💾 Checkpoint/,               // checkpoint
+          /🏁 Execution Complete/,       // final checkpoint
+          /🚀 Model Escalation/,         // escalation
+          /💬 Clarification Needed/,     // clarification_request
+          /📋 Planning/,                 // planning
+          /🤔 Deciding/,                 // should_respond
+          /🔍 Reflection Review/,        // reflection
+          /💡 Branching/,                // branching
+          /✅ Debugging Task Ready/,     // prompt_ready
+          /🔧 Executing Tool/,           // tool_execution
+        ];
+
+        if (statusPatterns.some(pattern => pattern.test(title) || pattern.test(description))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
   const historyMessages = recentMessages
-    .filter((m) => m.id !== currentMessage.id)
+    .filter((m) => m.id !== currentMessage.id && !isStatusUpdateMessage(m))
     .reverse();
 
   const formattedLines = historyMessages.map((msg) => {

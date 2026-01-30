@@ -146,6 +146,8 @@ export interface ExecutionTurn {
   confidence: number;
   status: 'continue' | 'stuck' | 'complete' | 'needs_clarification';
   modelUsed: string;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 export interface InterruptCommand {

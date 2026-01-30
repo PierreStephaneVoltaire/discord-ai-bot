@@ -46,15 +46,15 @@ export const AGENT_MODEL_TIER_MAP: Record<AgentRole, keyof typeof MODEL_TIERS> =
  * - Provider diversity: Spread agents across different providers in same tier
  */
 export const AGENT_MODEL_INDEX_MAP: Partial<Record<AgentRole, number>> = {
-  [AgentRole.PYTHON_CODER]: 1,     
-  [AgentRole.JS_TS_CODER]: 0,      
-  [AgentRole.RESEARCHER]: 1,       
-  [AgentRole.DEVOPS_ENGINEER]: 3, 
-  [AgentRole.COMMAND_EXECUTOR]: 2,  
-  [AgentRole.ARCHITECT]: 3,         
-  [AgentRole.CODE_REVIEWER]: 3,     
-  [AgentRole.DOCUMENTATION_WRITER]: 0, 
-  [AgentRole.DBA]: 2,              
+  [AgentRole.PYTHON_CODER]: 1,
+  [AgentRole.JS_TS_CODER]: 0,
+  [AgentRole.RESEARCHER]: 1,
+  [AgentRole.DEVOPS_ENGINEER]: 3,
+  [AgentRole.COMMAND_EXECUTOR]: 2,
+  [AgentRole.ARCHITECT]: 3,
+  [AgentRole.CODE_REVIEWER]: 3,
+  [AgentRole.DOCUMENTATION_WRITER]: 0,
+  [AgentRole.DBA]: 2,
 };
 
 /**
@@ -66,13 +66,13 @@ export const AGENT_MODEL_INDEX_MAP: Partial<Record<AgentRole, number>> = {
  */
 function getModelFromTier(tier: keyof typeof MODEL_TIERS, index: number = 0): string {
   const models = MODEL_TIERS[tier] as readonly string[];
-  
+
   // Handle out of bounds
   if (index < 0 || index >= models.length) {
     // Use last model in tier
     return models[models.length - 1];
   }
-  
+
   return models[index];
 }
 
@@ -113,7 +113,7 @@ export const TASK_TYPE_TO_PROMPT: Record<string, string> = {
   [TaskType.TECHNICAL_QA]: 'technical-qa',
   [TaskType.ARCHITECTURE_ANALYSIS]: 'architecture-analysis',
   [TaskType.DOC_SEARCH]: 'doc-search',
-  
+
   // Non-technical
   [TaskType.EXPLANATION]: 'explanation',
   [TaskType.SOCIAL]: 'social',
@@ -128,7 +128,7 @@ export const TASK_TYPE_TO_TIER_INDEX: Record<string, { tier: keyof typeof MODEL_
   [TaskType.TECHNICAL_QA]: { tier: 'tier3', index: 3 },
   [TaskType.ARCHITECTURE_ANALYSIS]: { tier: 'tier3', index: -1 },
   [TaskType.DOC_SEARCH]: { tier: 'tier2', index: 0 },
-  
+
   // Non-technical
   [TaskType.EXPLANATION]: { tier: 'tier2', index: 2 },
   [TaskType.SOCIAL]: { tier: 'tier1', index: 0 },
@@ -168,13 +168,39 @@ export function getTemplateForAgent(role: AgentRole): string {
 }
 
 /**
+ * Gets a random model from a tier, optionally excluding specific models
+ * 
+ * @param tier - The model tier
+ * @param excludeModels - Models to exclude from selection
+ * @returns Random model from tier
+ */
+function getRandomModelFromTier(tier: keyof typeof MODEL_TIERS, excludeModels: string[] = []): string {
+  const tierModels = MODEL_TIERS[tier] as readonly string[];
+  const availableModels = tierModels.filter(model => !excludeModels.includes(model));
+
+  // If no models left after filtering, return first model in tier
+  if (availableModels.length === 0) {
+    return tierModels[0];
+  }
+
+  // Random selection
+  const randomIndex = Math.floor(Math.random() * availableModels.length);
+  return availableModels[randomIndex];
+}
+
+/**
  * Gets the default model for an agent role
  * 
  * @param role - The agent role
  * @param preferredModel - Optional: Override with a specific model from the tier
+ * @param excludeModels - Optional: Models to exclude (for peer review)
  * @returns Model name
  */
-export function getModelForAgent(role: AgentRole, preferredModel?: string): string {
+export function getModelForAgent(
+  role: AgentRole,
+  preferredModel?: string,
+  excludeModels?: string[]
+): string {
   // If preferred model specified and it's in the role's tier, use it
   if (preferredModel) {
     const tier = AGENT_MODEL_TIER_MAP[role];
@@ -183,12 +209,17 @@ export function getModelForAgent(role: AgentRole, preferredModel?: string): stri
       return preferredModel;
     }
   }
-  
-  // Get tier and index for this role
+
   const tier = AGENT_MODEL_TIER_MAP[role];
+
+  // Special case: CODE_REVIEWER with excludeModels (peer review)
+  // Select random peer from same tier, excluding executor's model
+  if (role === AgentRole.CODE_REVIEWER && excludeModels && excludeModels.length > 0) {
+    return getRandomModelFromTier(tier, excludeModels);
+  }
+
+  // Standard case: use configured index
   const index = AGENT_MODEL_INDEX_MAP[role] ?? 0; // Default to first model
-  
-  // Get model from tier at specified index
   return getModelFromTier(tier, index);
 }
 

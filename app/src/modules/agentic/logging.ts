@@ -5,12 +5,11 @@ import type { ExecutionTurn, AgentRole } from '../litellm/types';
 
 const log = createLogger('AGENTIC:LOGGING');
 
-const TABLE_NAME = process.env.DYNAMODB_EXECUTIONS_TABLE || 'agentic-execution-logs';
+const TABLE_NAME = process.env.DYNAMODB_EXECUTIONS_TABLE || 'discord_executions';
 
 export interface ExecutionLog {
-  pk: string;              // threadId
-  sk: string;              // `TURN#${turn}#${timestamp}`
-  threadId: string;
+  execution_id: string;     // Unique ID for this execution log entry
+  thread_id: string;        // Discord thread ID
   turn: number;
   model: string;
   agentRole: AgentRole;
@@ -48,10 +47,12 @@ export async function logTurnToDb(params: {
     const now = new Date();
     const ttl = Math.floor(now.getTime() / 1000) + (30 * 24 * 60 * 60); // 30 days
 
-    const logEntry: ExecutionLog = {
-      pk: params.threadId,
-      sk: `TURN#${params.turn}#${now.getTime()}`,
-      threadId: params.threadId,
+    // Generate execution_id as threadId-timestamp-turn
+    const execution_id = `${params.threadId}-${now.getTime()}-turn${params.turn}`;
+
+    const logEntry = {
+      execution_id,
+      thread_id: params.threadId,
       turn: params.turn,
       model: params.model,
       agentRole: params.agentRole,
@@ -93,14 +94,16 @@ export async function logExecutionStart(params: {
     const now = new Date();
     const ttl = Math.floor(now.getTime() / 1000) + (30 * 24 * 60 * 60);
 
+    // Generate execution_id as threadId-timestamp-start
+    const execution_id = `${params.threadId}-${now.getTime()}-start`;
+
     await docClient.send(
       new PutCommand({
         TableName: TABLE_NAME,
         Item: {
-          pk: params.threadId,
-          sk: `EXECUTION_START#${now.getTime()}`,
+          execution_id,
+          thread_id: params.threadId,
           eventType: 'execution_started',
-          threadId: params.threadId,
           taskType: params.taskType,
           agentRole: params.agentRole,
           model: params.model,
@@ -131,14 +134,16 @@ export async function logExecutionComplete(params: {
     const now = new Date();
     const ttl = Math.floor(now.getTime() / 1000) + (30 * 24 * 60 * 60);
 
+    // Generate execution_id as threadId-timestamp-end
+    const execution_id = `${params.threadId}-${now.getTime()}-end`;
+
     await docClient.send(
       new PutCommand({
         TableName: TABLE_NAME,
         Item: {
-          pk: params.threadId,
-          sk: `EXECUTION_END#${now.getTime()}`,
+          execution_id,
+          thread_id: params.threadId,
           eventType: 'execution_completed',
-          threadId: params.threadId,
           totalTurns: params.totalTurns,
           finalStatus: params.finalStatus,
           success: params.success,

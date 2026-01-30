@@ -104,29 +104,29 @@ The sequential-thinking flow implements the **Reflexion** pattern for continuous
 
 | Tier | Models | Tool Support | Use Case | Cost |
 |------|--------|--------------|----------|------|
-| 1 | gemini-2.5-flash-lite | ❌ No | Social, writing | $ |
-| 2 | gemini, gpt-4o-mini | ✅ Yes | Coding, Q&A | $$ |
-| 3 | sonnet, gpt-4o | ✅ Yes | Complex code, reviews | $$$ |
-| 4 | opus, o1 | ✅ Yes | Critical decisions | $$$$ |
+| 1 | mistral-nemo, gpt-oss-120b:exacto, general, gemini-2.5-flash-lite | ❌ No | Social, writing | $ (0.02-0.10) |
+| 2 | minimax-m2.1, gpt-5.1-codex-mini, gemini-3-flash, glm-4.7 | ✅ Yes | Coding, Q&A | $$ (0.25-0.54) |
+| 3 | qwen3-coder-plus, gpt-5.1-codex-max, gemini-3-pro, claude-sonnet-4.5 | ✅ Yes | Complex code, reviews | $$$ (1.00-3.00) |
+| 4 | qwen3-max, gpt-5.2-codex, claude-sonnet-4.5, claude-opus-4.5 | ✅ Yes | Critical decisions | $$$$ (1.20-5.00) |
 
 **Escalation Path:**
 ```
-gemini-2.5-flash-lite → gemini → gpt-4o-mini → sonnet → gpt-4o → opus → o1
+mistral-nemo → minimax-m2.1 → qwen3-coder-plus → claude-sonnet-4.5 → claude-opus-4.5
 ```
 
 ### Agent Roles
 
-| Role | Tier | Template | Use Case |
-|------|------|----------|----------|
-| Command Executor | 2 | command-executor | Fast bash/kubectl commands |
-| Python Coder | 2 | python-coder | Python development |
-| JS/TS Coder | 2 | js-ts-coder | JavaScript/TypeScript |
-| DevOps Engineer | 3 | devops-engineer | Infrastructure, K8s |
-| Architect | 4 | architect | System design |
-| Code Reviewer | 3 | code-reviewer | Code quality |
-| Documentation Writer | 3 | documentation-writer | Docs, README |
-| DBA | 3 | dba | Database operations |
-| Researcher | 2 | researcher | Code search |
+| Role | Tier | Template | Model | Use Case |
+|------|------|----------|-------|----------|
+| Command Executor | 2 | command-executor | [2] gemini-3-flash | Fast bash/kubectl commands |
+| Python Coder | 2 | python-coder | [1] gpt-5.1-codex-mini | Python development |
+| JS/TS Coder | 2 | js-ts-coder | [0] minimax-m2.1 | JavaScript/TypeScript |
+| DevOps Engineer | 3 | devops-engineer | [3] claude-sonnet-4.5 | Infrastructure, K8s |
+| Architect | 4 | architect | [3] claude-opus-4.5 | System design |
+| Code Reviewer | 3 | code-reviewer | [3] claude-sonnet-4.5 | Code quality (w/ Random Peer) |
+| Documentation Writer | 3 | documentation-writer | [0] qwen3-coder-plus | Docs, README |
+| DBA | 3 | dba | [2] gemini-3-pro | Database operations |
+| Researcher | 2 | researcher | [1] gpt-5.1-codex-mini | Code search |
 
 ## Advanced Features
 
@@ -296,8 +296,9 @@ LITELLM_BASE_URL=http://localhost:4000
 AWS_REGION=ca-central-1
 DYNAMODB_SESSIONS_TABLE=discord_sessions
 DYNAMODB_EXECUTIONS_TABLE=discord_executions
-AGENTIC_EVENTS_QUEUE_URL=https://sqs.region.amazonaws.com/account/queue
+AGNETIC_EVENTS_QUEUE_URL=https://sqs.region.amazonaws.com/account/queue
 S3_ARTIFACT_BUCKET=discord-bot-artifacts  # Per-thread artifact storage
+PLANNER_MODEL_ID=kimi-k2.5                # Model for planning phase
 ```
 
 3. **Run locally:**

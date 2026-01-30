@@ -3,6 +3,7 @@ import { MODEL_TIERS } from '../../modules/agentic/escalation';
 import { chatCompletion, extractContent } from '../../modules/litellm/index';
 import { createPlan } from '../planning';
 import { setupSession } from '../session';
+import { streamProgressToDiscord } from '../../modules/agentic/progress';
 import type { FlowContext, FlowResult } from './types';
 
 const log = createLogger('FLOW:BRANCH');
@@ -71,15 +72,31 @@ Keep each approach concise but thorough. Focus on the "what" and "why", not the 
 
     // 2. Parallel brainstorming
     log.info('Calling brainstorming models in parallel');
+
+    // Show progress for model 1
+    await streamProgressToDiscord(context.threadId, {
+        type: 'branching',
+        branchingPhase: 'model1',
+        model: model1
+    });
+
     const [response1, response2] = await Promise.all([
         chatCompletion({
             model: model1,
             messages: [{ role: 'user', content: brainstormingPrompt }],
         }),
-        chatCompletion({
-            model: model2,
-            messages: [{ role: 'user', content: brainstormingPrompt }],
-        }),
+        (async () => {
+            // Show progress for model 2
+            await streamProgressToDiscord(context.threadId, {
+                type: 'branching',
+                branchingPhase: 'model2',
+                model: model2
+            });
+            return chatCompletion({
+                model: model2,
+                messages: [{ role: 'user', content: brainstormingPrompt }],
+            });
+        })()
     ]);
 
     const content1 = extractContent(response1);
@@ -87,6 +104,14 @@ Keep each approach concise but thorough. Focus on the "what" and "why", not the 
 
     // 3. Consolidation
     log.info('Consolidating approaches');
+
+    // Show consolidation progress
+    await streamProgressToDiscord(context.threadId, {
+        type: 'branching',
+        branchingPhase: 'consolidator',
+        model: consolidator
+    });
+
     const consolidationPrompt = `
 You are a lead architect consolidating brainstorming from two expert advisors.
 

@@ -1,5 +1,6 @@
 import { generatePlan } from '../modules/litellm/opus';
 import { createLogger } from '../utils/logger';
+import { streamProgressToDiscord } from '../modules/agentic/progress';
 import type { Session } from '../modules/dynamodb/types';
 import type { PlanningResult } from '../modules/litellm/types';
 import type { FormattedHistory, ProcessedAttachment } from './types';
@@ -9,6 +10,7 @@ import {
   formatKeyInsightsForPrompt,
   formatEvaluationForPrompt,
 } from '../modules/reflexion/memory';
+import { getConfig } from '../config';
 
 const log = createLogger('PLANNING');
 
@@ -38,6 +40,13 @@ export async function createPlan(input: PlanningInput): Promise<PlanningResult> 
 
   log.info(`Calling Opus for planning (with Reflexion context)`);
 
+  // Show planning progress in Discord
+  await streamProgressToDiscord(input.threadId, {
+    type: 'planning',
+    model: getConfig().PLANNER_MODEL_ID,
+    phase: 'planning'
+  });
+
   const result = await generatePlan(
     {
       thread_id: input.threadId,
@@ -58,6 +67,12 @@ export async function createPlan(input: PlanningInput): Promise<PlanningResult> 
     },
     input.threadId
   );
+
+  // Show prompt ready in Discord
+  await streamProgressToDiscord(input.threadId, {
+    type: 'prompt_ready',
+    promptPreview: result.reformulated_prompt.substring(0, 200)
+  });
 
   log.info(`Planning result:`);
   log.info(`  topic_slug: ${result.topic_slug}`);

@@ -5,7 +5,8 @@ import { createLogger } from '../../utils/logger';
 const log = createLogger('AGENTIC:PROGRESS');
 
 export interface ProgressUpdate {
-  type: 'turn_start' | 'turn_complete' | 'tool_execution' | 'checkpoint' | 'escalation' | 'clarification_request';
+  type: 'turn_start' | 'turn_complete' | 'tool_execution' | 'checkpoint' | 'escalation' | 'clarification_request' |
+  'planning' | 'should_respond' | 'reflection' | 'branching' | 'prompt_ready';
   turnNumber?: number;
   maxTurns?: number;
   confidence?: number;
@@ -18,6 +19,11 @@ export interface ProgressUpdate {
   escalationReason?: string;
   newModel?: string;
   clarificationMessage?: string;
+  phase?: string;
+  branchingPhase?: string;
+  promptPreview?: string;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 /**
@@ -33,7 +39,7 @@ export async function postCommitMessage(
   try {
     const client = getDiscordClient();
     const channel = await client.channels.fetch(threadId);
-    
+
     if (!channel || !channel.isTextBased()) {
       throw new Error(`Channel ${threadId} is not text-based`);
     }
@@ -52,7 +58,7 @@ export async function postCommitMessage(
       .setTimestamp();
 
     const message = await textChannel.send({ embeds: [embed] });
-    
+
     // Add reaction options
     await message.react('👍');
     await message.react('👎');
@@ -73,14 +79,14 @@ export async function streamProgressToDiscord(
   try {
     const client = getDiscordClient();
     const channel = await client.channels.fetch(threadId);
-    
+
     if (!channel || (!channel.isTextBased() && !(channel instanceof ThreadChannel))) {
       log.warn(`Channel ${threadId} not found or not text-based`);
       return;
     }
 
     const textChannel = channel as TextChannel | ThreadChannel;
-    
+
     switch (update.type) {
       case 'turn_start': {
         const embed = new EmbedBuilder()
@@ -91,17 +97,17 @@ export async function streamProgressToDiscord(
             { name: 'Model', value: update.model || 'Unknown', inline: true }
           )
           .setTimestamp();
-        
+
         await textChannel.send({ embeds: [embed] });
-        log.info(`Turn ${update.turnNumber}/${update.maxTurns} started`);
+        log.info(`Turn ${update.turnNumber}/${update.maxTurns} started with model ${update.model || 'Unknown'}`);
         break;
       }
 
       case 'tool_execution': {
-        const argsPreview = update.args 
+        const argsPreview = update.args
           ? JSON.stringify(update.args).substring(0, 100) + (JSON.stringify(update.args).length > 100 ? '...' : '')
           : 'No args';
-        
+
         const embed = new EmbedBuilder()
           .setColor(0xFEE75C) // Yellow
           .setTitle(`🔧 Executing Tool`)
@@ -110,7 +116,7 @@ export async function streamProgressToDiscord(
             { name: 'Arguments', value: `\`\`\`json\n${argsPreview}\n\`\`\``, inline: false }
           )
           .setTimestamp();
-        
+
         await textChannel.send({ embeds: [embed] });
         log.info(`Executing tool: ${update.tool}`);
         break;
@@ -120,36 +126,64 @@ export async function streamProgressToDiscord(
         const confidence = update.confidence || 0;
         const color = confidence > 70 ? 0x57F287 : confidence > 50 ? 0xFEE75C : 0xED4245; // Green/Yellow/Red
         const emoji = confidence > 70 ? '✅' : confidence > 50 ? '⚠️' : '❌';
-        
+
         const embed = new EmbedBuilder()
           .setColor(color)
           .setTitle(`${emoji} Turn ${update.turnNumber} Complete`)
           .addFields(
             { name: 'Confidence', value: `${confidence}%`, inline: true },
             { name: 'Files Modified', value: `${update.filesModified || 0}`, inline: true },
-            { name: 'Status', value: update.status || 'Unknown', inline: true }
+            { name: 'Status', value: update.status || 'Unknown', inline: true },
+            { name: 'Model', value: update.model || 'Unknown', inline: true }
           )
           .setTimestamp();
-        
+
+        // Add token usage if available
+        if (update.inputTokens !== undefined || update.outputTokens !== undefined) {
+          const inputTokens = update.inputTokens || 0;
+          const outputTokens = update.outputTokens || 0;
+          const totalTokens = inputTokens + outputTokens;
+          embed.addFields({
+            name: 'Tokens',
+            value: `In: ${inputTokens.toLocaleString()} | Out: ${outputTokens.toLocaleString()} | Total: ${totalTokens.toLocaleString()}`,
+            inline: false
+          });
+        }
+
         await textChannel.send({ embeds: [embed] });
-        log.info(`Turn ${update.turnNumber} complete`);
+        log.info(`Turn ${update.turnNumber} complete with model ${update.model || 'Unknown'}`);
         break;
       }
 
       case 'checkpoint': {
         const data = update.checkpointData || {};
+        const isFinal = data.totalTurns !== undefined && data.turnNumber >= data.totalTurns;
         const embed = new EmbedBuilder()
           .setColor(0x5865F2)
-          .setTitle(`💾 Checkpoint ${data.turnNumber}/${data.totalTurns}`)
-          .setDescription(`Progress saved at turn ${data.turnNumber}`)
+          .setTitle(isFinal ? `🏁 Execution Complete` : `💾 Checkpoint ${data.turnNumber}/${data.totalTurns}`)
+          .setDescription(isFinal ? `Execution finished after ${data.turnNumber} turns` : `Progress saved at turn ${data.turnNumber}`)
           .addFields(
             { name: 'Files Modified', value: `${data.filesModified || 0}`, inline: true },
             { name: 'Confidence', value: `${data.confidence || 0}%`, inline: true }
           )
           .setTimestamp();
-        
+
+        // Add model info if available
+        if (data.finalModel) {
+          embed.addFields({ name: 'Final Model', value: data.finalModel, inline: true });
+        }
+
+        // Add token usage if available (for final checkpoint)
+        if (data.totalTokens !== undefined) {
+          embed.addFields({
+            name: 'Total Token Usage',
+            value: `In: ${(data.totalInputTokens || 0).toLocaleString()} | Out: ${(data.totalOutputTokens || 0).toLocaleString()} | Total: ${data.totalTokens.toLocaleString()}`,
+            inline: false
+          });
+        }
+
         await textChannel.send({ embeds: [embed] });
-        log.info(`Checkpoint at turn ${data.turnNumber}`);
+        log.info(`${isFinal ? 'Final checkpoint' : 'Checkpoint'} at turn ${data.turnNumber}`);
         break;
       }
 
@@ -163,7 +197,7 @@ export async function streamProgressToDiscord(
             { name: 'Turn', value: `${update.turnNumber}`, inline: true }
           )
           .setTimestamp();
-        
+
         await textChannel.send({ embeds: [embed] });
         log.warn(`Escalated: ${update.model} → ${update.newModel}`);
         break;
@@ -180,16 +214,82 @@ export async function streamProgressToDiscord(
           )
           .setFooter({ text: 'React with 🛑 to stop, 💬 to clarify, 🔄 to retry, or ✅ to continue' })
           .setTimestamp();
-        
+
         const message = await textChannel.send({ embeds: [embed] });
-        
+
         // Add reaction buttons for user interaction
         await message.react('🛑'); // STOP
         await message.react('💬'); // CLARIFY
         await message.react('🔄'); // RETRY
         await message.react('✅'); // CONTINUE
-        
+
         log.warn(`Clarification requested at turn ${update.turnNumber}`);
+        break;
+      }
+
+      case 'planning':
+      case 'should_respond': {
+        const emoji = update.type === 'planning' ? '📋' : '🤔';
+        const title = update.type === 'planning' ? 'Planning' : 'Deciding';
+
+        const embed = new EmbedBuilder()
+          .setColor(0x9B59B6) // Purple
+          .setTitle(`${emoji} ${title}`)
+          .setDescription(`Using **${update.model}**`)
+          .addFields(
+            { name: 'Phase', value: update.phase || 'Processing', inline: true }
+          )
+          .setTimestamp();
+
+        await textChannel.send({ embeds: [embed] });
+        log.info(`${title} phase started with model ${update.model}`);
+        break;
+      }
+
+      case 'reflection': {
+        const embed = new EmbedBuilder()
+          .setColor(0x3498DB) // Blue
+          .setTitle(`🔍 Reflection Review`)
+          .setDescription(`Evaluating execution trajectory using **${update.model || 'default model'}**`)
+          .addFields(
+            { name: 'Previous Score', value: `${update.confidence}%`, inline: true }
+          )
+          .setTimestamp();
+
+        await textChannel.send({ embeds: [embed] });
+        log.info(`Reflection review started with model ${update.model || 'default model'}`);
+        break;
+      }
+
+      case 'branching': {
+        const emoji = update.branchingPhase === 'consolidator' ? '🧠' : '💡';
+        const modelName = update.model || 'Unknown';
+        const phaseDisplay = {
+          'model1': `Brainstorming (${modelName})`,
+          'model2': `Brainstorming (${modelName})`,
+          'consolidator': `Consolidating (${modelName})`
+        }[update.branchingPhase || 'model1'] || `Brainstorming (${modelName})`;
+
+        const embed = new EmbedBuilder()
+          .setColor(0xE74C3C) // Red
+          .setTitle(`${emoji} Branching`)
+          .setDescription(phaseDisplay)
+          .setTimestamp();
+
+        await textChannel.send({ embeds: [embed] });
+        log.info(`Branching phase: ${update.branchingPhase} with model ${modelName}`);
+        break;
+      }
+
+      case 'prompt_ready': {
+        const embed = new EmbedBuilder()
+          .setColor(0x2ECC71) // Green
+          .setTitle(`✅ Task Ready`)
+          .setDescription(update.promptPreview || 'Reformulated prompt ready for execution')
+          .setTimestamp();
+
+        await textChannel.send({ embeds: [embed] });
+        log.info('Reformulated prompt ready');
         break;
       }
 
@@ -211,7 +311,7 @@ export function formatCheckpointMessage(
   filesModified: number,
   fileList: string[]
 ): string {
-  const fileListStr = fileList.length > 0 
+  const fileListStr = fileList.length > 0
     ? fileList.slice(0, 5).join(', ') + (fileList.length > 5 ? `, +${fileList.length - 5} more` : '')
     : 'No files modified yet';
 

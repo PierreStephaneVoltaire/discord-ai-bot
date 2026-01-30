@@ -16,9 +16,19 @@ export interface ResponseInput {
 export async function formatAndSendResponse(input: ResponseInput): Promise<void> {
   log.info(`Formatting response for Discord (Thread: ${input.threadId})`);
   log.info(`Raw response length: ${input.response.length}`);
+  log.info(`First 200 chars: ${input.response.substring(0, 200)}`);
 
   const parts = parseResponse(input.response);
-  log.info(`Parsed response into ${parts.length} parts`);
+  const fileParts = parts.filter(p => p.type === 'file').length;
+  const textParts = parts.filter(p => p.type === 'text').length;
+  log.info(`Parsed response into ${parts.length} parts (${fileParts} file(s), ${textParts} text)`);
+
+  if (fileParts > 0) {
+    log.info(`File markers detected:`);
+    parts.filter(p => p.type === 'file').forEach((p, i) => {
+      log.info(`  [${i + 1}] ${p.filePath}`);
+    });
+  }
 
   const client = getDiscordClient();
 
@@ -34,8 +44,14 @@ export async function formatAndSendResponse(input: ResponseInput): Promise<void>
       }
     } else if (part.type === 'file' && part.filePath) {
       try {
-        log.info(`Fetching file from workspace: ${part.filePath}`);
+        log.info(`📎 Attempting to fetch file from workspace`);
+        log.info(`  Thread ID: ${input.threadId}`);
+        log.info(`  File path: ${part.filePath}`);
+        log.info(`  Workspace base: /workspace/${input.threadId}`);
+        log.info(`  Full expected path: /workspace/${input.threadId}/${part.filePath}`);
+
         const content = await workspaceManager.readFile(input.threadId, part.filePath);
+        log.info(`✅ File read successful! Size: ${content.length} bytes`);
 
         await sendMessage(client, input.channelId, {
           content: `📎 **${part.content}**`,
@@ -46,10 +62,15 @@ export async function formatAndSendResponse(input: ResponseInput): Promise<void>
             },
           ],
         });
+        log.info(`✅ File uploaded to Discord: ${part.content}`);
       } catch (err) {
-        log.error(`Failed to attach file ${part.filePath}`, { error: String(err) });
+        log.error(`❌ Failed to attach file ${part.filePath}`);
+        log.error(`  Thread ID: ${input.threadId}`);
+        log.error(`  Error: ${String(err)}`);
+        log.error(`  Stack: ${err instanceof Error ? err.stack : 'N/A'}`);
+
         await sendMessage(client, input.channelId, {
-          content: `⚠️ *Could not attach file \`${part.content}\`. It may not have been created or saved properly.*`
+          content: `⚠️ *Could not attach file \`${part.content}\`. It may not have been created or saved properly.*\n\`\`\`\n${String(err)}\n\`\`\``
         });
       }
     }

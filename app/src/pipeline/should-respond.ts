@@ -1,4 +1,5 @@
 import { shouldRespond as opusShouldRespond } from '../modules/litellm/opus';
+import { streamProgressToDiscord } from '../modules/agentic/progress';
 import { getConfig } from '../config/index';
 import { createLogger } from '../utils/logger';
 import { TaskType, AgentRole, TaskComplexity } from '../modules/litellm/types';
@@ -55,6 +56,13 @@ export async function checkShouldRespond(
   }
 
   log.info('Calling Opus for decision');
+
+  // Show progress in Discord
+  await streamProgressToDiscord(input.messageId, {
+    type: 'should_respond',
+    model: 'kimi-k2.5',
+    phase: 'deciding'
+  });
 
   const opusResult = await opusShouldRespond(
     {

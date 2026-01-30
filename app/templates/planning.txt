@@ -24,7 +24,7 @@ Example instruction to include in reformulated_prompt:
 - If continuation → use existing topic's files.
 - Never write code (pseudo-code is fine), implementation details—describe WHAT and WHERE, not HOW.
 - **Artifact Store**: We use per-thread workspaces. The execution model has access to files in `{{workspace_path}}`.
-- **File Referencing**: Instruct the model to use `<<filename>>` markers in its final response to indicate which files should be uploaded as Discord attachments.
+- **File Referencing**: Instruct the model to use `<<filename>>` markers followed IMMEDIATELY by a code block containing the content in its final response to indicate which files should be uploaded/saved.
 - Plan should include:
   - Objective: One sentence goal + what success looks like.
   - Context: Relevant files/paths (workspace: {{workspace_path}}), dependencies, prior constraints.
@@ -32,7 +32,7 @@ Example instruction to include in reformulated_prompt:
 - Instructions should include:
   - Rules: Language/framework standards, naming conventions, error handling.
   - Constraints: What NOT to modify, what NOT to use, what NOT to assume.
-  - **Output Rule**: Remind the model to use `<<filename>>` markers for files it wants the user to see/download.
+  - **Output Rule**: Remind the model to use `<<filename>>` markers followed immediately by the code block for files it wants the user to see/download.
   - **Reasoning Rule**: Always explain your reasoning before implementing.
 
 ## Task Types

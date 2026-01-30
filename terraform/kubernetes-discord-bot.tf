@@ -223,6 +223,11 @@ resource "kubernetes_deployment" "discord_bot" {
             value = var.s3_artifact_bucket
           }
 
+          env {
+            name  = "PLANNER_MODEL_ID"
+            value = "kimi-k2.5"
+          }
+
           liveness_probe {
             http_get {
               path = "/health"

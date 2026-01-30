@@ -7,6 +7,7 @@ import { getMaxTurns, getCheckpointInterval, getModelForAgent } from '../../temp
 import { generateThreadName } from '../../modules/litellm/opus';
 import { getDiscordClient, createThread } from '../../modules/discord/index';
 import { trajectoryEvaluator } from '../../modules/reflexion/evaluator';
+import { streamProgressToDiscord } from '../../modules/agentic/progress';
 import { addReflectionToHistory, addKeyInsight } from '../../modules/reflexion/memory';
 import { updateSession } from '../../modules/dynamodb/sessions';
 import type { Reflection } from '../../modules/dynamodb/types';
@@ -90,8 +91,24 @@ export async function executeSequentialThinkingFlow(
         workspacePath
     );
 
-    // Evaluate trajectory (Reflexion)
-    log.info('Evaluating trajectory');
+    // Evaluate the trajectory using Reflexion
+    log.info('Evaluating execution trajectory');
+
+    // Sync workspace to S3 before reflection
+    try {
+        const { s3Sync } = await import('../../modules/workspace/s3-sync');
+        await s3Sync.syncToS3(finalThreadId);
+    } catch (e) {
+        log.warn(`S3 sync before reflection failed: ${e}`);
+    }
+
+    // Show reflection progress in Discord
+    await streamProgressToDiscord(context.threadId, {
+        type: 'reflection',
+        confidence: loopResult.finalConfidence,
+        model: loopResult.turns[loopResult.turns.length - 1]?.modelUsed || 'unknown'
+    });
+
     const evaluation = await trajectoryEvaluator.evaluateTrajectory(
         loopResult.turns,
         context.history.current_message,

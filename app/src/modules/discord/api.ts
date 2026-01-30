@@ -154,6 +154,10 @@ export async function getMessages(
       id: u.id,
       username: u.username,
     })),
+    embeds: msg.embeds.map((embed) => ({
+      title: embed.title || undefined,
+      description: embed.description || undefined,
+    })),
   }));
 }
 

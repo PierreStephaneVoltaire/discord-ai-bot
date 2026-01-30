@@ -38,13 +38,14 @@ export const MODEL_TIERS = {
     "qwen3-coder-plus",      // $1/$5
     "gpt-5.1-codex-max" ,      // $1.25/$10
     "gemini-3-pro",          // $2/$12
-    "claude-sonnet-4.5",                // $3/$15
+    "kimi-k2.5",                // $0.50/$2.80
   ],
   
   tier4: [
     "qwen3-max",                    // $1.20/$6
     "gpt-5.2-codex",                 // $1.75/$14
     "claude-sonnet-4.5",                // $3/$15
+    
     "claude-opus-4.5",                  // $5/$25
   ],
 } as const;

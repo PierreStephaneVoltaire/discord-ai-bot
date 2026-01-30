@@ -106,7 +106,7 @@ resource "null_resource" "dev_sandbox_build" {
   provisioner "local-exec" {
     working_dir = "${path.module}/../docker"
     command     = <<EOT
-      aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
+ aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
       packer init dev-sandbox.pkr.hcl
       packer build -var "image_repository=${aws_ecr_repository.dev_sandbox.repository_url}" -var "image_tag=${local.dev_sandbox_build_trigger}" dev-sandbox.pkr.hcl
     EOT

@@ -1,4 +1,5 @@
 import { chatCompletion, extractContent, extractJsonFromContent } from './index';
+import { getConfig } from '../../config/index';
 import { loadTemplate, renderTemplate } from '../../templates/loader';
 import { createLogger } from '../../utils/logger';
 import { shouldUseAgenticLoop } from '../../templates/registry';
@@ -110,8 +111,9 @@ export async function generatePlan(
     previous_confidence: String(context.previous_confidence || 0),
   });
 
+  const config = getConfig();
   const response = await chatCompletion({
-    model: 'claude-opus-4.5',
+    model: config.PLANNER_MODEL_ID,
     messages: [
       { role: 'system', content: systemPrompt },
       {

@@ -59,7 +59,8 @@ async function getSystemPromptForAgent(agentRole: AgentRole, workspacePath: stri
 function parseTurn(
   response: any,
   turnNumber: number,
-  model: string
+  model: string,
+  usage?: { prompt_tokens?: number; completion_tokens?: number }
 ): ExecutionTurn {
   const choice = response.choices?.[0];
   const message = choice?.message;
@@ -95,6 +96,8 @@ function parseTurn(
     confidence,
     status,
     modelUsed: model,
+    inputTokens: usage?.prompt_tokens,
+    outputTokens: usage?.completion_tokens,
   };
 }
 
@@ -127,12 +130,58 @@ function updateExecutionState(state: ExecutionState, turn: ExecutionTurn): void 
     }
   }
 
+  // Also check if relevant tools were called (implicit file changes/progress)
+  if (!hasFileChange && turn.toolCalls && turn.toolCalls.length > 0) {
+    const PROGRESS_TOOLS = [
+      'write_to_file',
+      'create_file',
+      'replace_file_content',
+      'edit_file',
+      'run_command',
+      'execute_command',
+      'apply_diff',
+      'read_file', // Reading files is also progress (investigation)
+      'list_dir',  // Exploration is progress
+      'search_code'
+    ];
+
+    for (const call of turn.toolCalls) {
+      if (PROGRESS_TOOLS.includes(call.function.name)) {
+        hasFileChange = true;
+        log.info(`🛠️ Tool execution detected as progress: ${call.function.name}`);
+
+        // If it's a file modification tool, try to extract filename from args for the tracker
+        try {
+          const args = JSON.parse(call.function.arguments);
+          // Check common argument names for file paths
+          const fileName = args.TargetFile || args.file_path || args.target_file || args.filename || args.path || args.AbsolutePath;
+
+          if (fileName && typeof fileName === 'string') {
+            if (!state.fileChanges.includes(fileName)) {
+              state.fileChanges.push(fileName);
+              log.info(`📝 Added to file changes tracker (from tool): ${fileName}`);
+            }
+          }
+        } catch (e) {
+          // Ignore args parsing error - purely optional tracking
+          log.warn(`Failed to parse tool args for tracking: ${e}`);
+        }
+        break;
+      }
+    }
+  }
+
   if (hasFileChange) {
     state.noProgressTurns = 0;
-    // Extract file names from markers if possible
+    // Extract file names from markers if possible (legacy text check)
     const markerMatch = turn.response.match(/<<([^>]+)>>/);
-    if (markerMatch && !state.fileChanges.includes(markerMatch[1])) {
-      state.fileChanges.push(markerMatch[1]);
+    if (markerMatch) {
+      const fileName = markerMatch[1];
+      log.info(`🔍 FILE MARKER DETECTED in turn ${state.turnNumber}: <<${fileName}>>`);
+      if (!state.fileChanges.includes(fileName)) {
+        state.fileChanges.push(fileName);
+        log.info(`📝 Added to file changes tracker: ${fileName}`);
+      }
     }
   } else {
     state.noProgressTurns++;
@@ -222,6 +271,10 @@ export async function executeSequentialThinkingLoop(
   let currentModel = config.model;
   let consecutiveLowConfidenceTurns = 0;
 
+  // Track token usage
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
   // Load MCP tools
   const tools = await getTools();
   log.info(`Loaded ${tools.length} MCP tools for execution`);
@@ -271,7 +324,13 @@ export async function executeSequentialThinkingLoop(
         tools: tools,
       });
 
-      const turn = parseTurn(response, state.turnNumber, currentModel);
+      if (response.usage) {
+        totalInputTokens += response.usage.prompt_tokens || 0;
+        totalOutputTokens += response.usage.completion_tokens || 0;
+        log.info(`Turn ${state.turnNumber} Usage: ${response.usage.prompt_tokens} in / ${response.usage.completion_tokens} out`);
+      }
+
+      const turn = parseTurn(response, state.turnNumber, currentModel, response.usage);
       turn.input = conversationHistory[conversationHistory.length - 1].content;
 
       // Update persistent score
@@ -304,6 +363,18 @@ export async function executeSequentialThinkingLoop(
         turn: turn.turnNumber,
         confidence: turn.confidence,
         status: turn.status
+      });
+
+      // Stream turn completion with model and token info
+      await streamProgressToDiscord(threadId, {
+        type: 'turn_complete',
+        turnNumber: turn.turnNumber,
+        confidence: turn.confidence,
+        filesModified: state.fileChanges.length,
+        status: turn.status,
+        model: turn.modelUsed,
+        inputTokens: turn.inputTokens,
+        outputTokens: turn.outputTokens,
       });
 
       // Check for escalation
@@ -399,6 +470,23 @@ export async function executeSequentialThinkingLoop(
     threadId,
     totalTurns: state.turnNumber,
     finalStatus: turns[turns.length - 1]?.status || 'unknown'
+  });
+
+  log.info(`🏁 Loop Complete. Total Token Usage -- Input: ${totalInputTokens} | Output: ${totalOutputTokens} | Combined: ${totalInputTokens + totalOutputTokens}`);
+
+  // Send final summary to Discord with token usage
+  await streamProgressToDiscord(threadId, {
+    type: 'checkpoint',
+    checkpointData: {
+      turnNumber: state.turnNumber,
+      confidence: state.confidenceScore,
+      filesModified: state.fileChanges.length,
+      totalTurns: turns.length,
+      finalModel: currentModel,
+      totalInputTokens,
+      totalOutputTokens,
+      totalTokens: totalInputTokens + totalOutputTokens,
+    },
   });
 
   await releaseLock(threadId);

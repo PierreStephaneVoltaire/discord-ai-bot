@@ -14,8 +14,10 @@ export function parseResponse(response: string): ResponsePart[] {
 
     let lastIndex = 0;
     let match;
+    let markerCount = 0;
 
     while ((match = regex.exec(response)) !== null) {
+        markerCount++;
         // Add text before the marker
         const textBefore = response.substring(lastIndex, match.index);
         if (textBefore) {
@@ -24,6 +26,7 @@ export function parseResponse(response: string): ResponsePart[] {
 
         // Add the file part
         const filePath = match[1].trim();
+        console.log(`[PARSER] Found file marker #${markerCount}: <<${filePath}>>`);
         parts.push({
             type: 'file',
             content: filePath,
@@ -43,6 +46,9 @@ export function parseResponse(response: string): ResponsePart[] {
     if (parts.length === 0 && response) {
         parts.push({ type: 'text', content: response });
     }
+
+    console.log(`[PARSER] Parse complete: ${markerCount} marker(s) found, ${parts.length} total parts`);
+    console.log(`[PARSER] Parts breakdown: ${parts.map(p => p.type).join(', ')}`);
 
     return parts;
 }

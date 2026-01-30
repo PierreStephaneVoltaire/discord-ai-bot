@@ -1,9 +1,10 @@
-import type { Client, Message, MessageReaction, User, PartialMessageReaction, PartialUser, ThreadChannel } from 'discord.js';
+import type { Client, Message, MessageReaction, User, PartialMessageReaction, PartialUser, ThreadChannel, Interaction } from 'discord.js';
 import { createLogger } from '../../utils/logger';
 import type { DiscordMessagePayload } from './types';
 import { updateSessionConfidence, deleteSession } from '../dynamodb/sessions';
 import { workspaceManager } from '../workspace/manager';
 import { s3Sync } from '../workspace/s3-sync';
+import { registerSlashCommands, handleSlashCommand } from './slash-commands';
 
 const log = createLogger('DISCORD:EVENT');
 
@@ -12,9 +13,37 @@ export type MessageHandler = (payload: DiscordMessagePayload) => Promise<void>;
 export function setupEventHandlers(client: Client, onMessage: MessageHandler): void {
   log.info('Setting up event handlers');
 
-  client.on('ready', () => {
+  client.on('ready', async () => {
     log.info(`on_ready triggered`);
     log.info(`Gateway connected as ${client.user?.username} (ID: ${client.user?.id})`);
+
+    // Register slash commands when bot is ready
+    try {
+      await registerSlashCommands(client);
+    } catch (error) {
+      log.error('Failed to register slash commands:', { error: String(error) });
+    }
+  });
+
+  // Handle slash command interactions
+  client.on('interactionCreate', async (interaction: Interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+
+    try {
+      await handleSlashCommand(interaction);
+    } catch (error) {
+      log.error('Error handling slash command:', { error: String(error) });
+
+      // Try to respond with error if not already responded
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: 'An error occurred while processing your command.',
+          ephemeral: true,
+        }).catch(() => {
+          // Ignore if we can't reply
+        });
+      }
+    }
   });
 
   client.on('messageCreate', async (message: Message) => {

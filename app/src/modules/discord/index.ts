@@ -52,3 +52,4 @@ export async function startDiscordBot(onMessage: MessageHandler): Promise<Client
 export * from './api';
 export * from './events';
 export * from './types';
+export * from './slash-commands';

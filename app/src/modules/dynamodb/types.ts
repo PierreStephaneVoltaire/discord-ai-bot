@@ -4,6 +4,14 @@ export interface SubTopic {
   status: 'pending' | 'in_progress' | 'completed';
 }
 
+export interface EscalationEvent {
+  turnNumber: number;
+  fromModel: string;
+  toModel: string;
+  reason: string;
+  timestamp: string;
+}
+
 export interface Reflection {
   timestamp: string;
   score: number;
@@ -35,6 +43,16 @@ export interface Session {
   reflections?: Reflection[];           // Last N reflections (sliding window)
   key_insights?: string[];              // Persistent learnings
   last_trajectory_summary?: string;     // Summary of previous execution
+
+  // NEW: Execution tracking fields
+  agent_role?: string;                  // Current agent role
+  model?: string;                       // Current model being used
+  current_turn?: number;                // Current turn number
+  max_turns?: number;                   // Maximum turns allowed
+  checkpoint?: boolean;                 // Whether checkpoint is active
+  last_sync?: string;                   // Last S3 sync timestamp
+  escalations?: EscalationEvent[];      // Escalation history
+  flow_override?: string;               // Flow override for next execution
 }
 
 export interface Execution {
@@ -70,6 +88,16 @@ export interface SessionUpdate {
   reflections?: Reflection[];
   key_insights?: string[];
   last_trajectory_summary?: string;
+
+  // NEW: Execution tracking fields
+  agent_role?: string;
+  model?: string;
+  current_turn?: number;
+  max_turns?: number;
+  checkpoint?: boolean;
+  last_sync?: string;
+  escalations?: EscalationEvent[];
+  flow_override?: string;
 }
 
 export interface ExecutionUpdate {

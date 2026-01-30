@@ -24,7 +24,7 @@ import {
 import type { PipelineResult } from './types';
 import { FlowType } from '../modules/litellm/types';
 import { s3Sync } from '../modules/workspace/s3-sync';
-import { discordFileSync } from '../modules/workspace/file-sync';
+import { discordFileSync, type SyncResult } from '../modules/workspace/file-sync';
 import { getDiscordClient } from '../modules/discord/index';
 
 const log = createLogger('PIPELINE');
@@ -40,6 +40,8 @@ export async function processMessage(
   log.info(`Message ID: ${message.id}`);
   log.info(`Author: ${message.author.username}`);
   log.info(`Channel: ${message.channel_id}`);
+
+  let threadId: string | undefined;
 
   try {
     // Phase 1: Pre-processing
@@ -67,7 +69,7 @@ export async function processMessage(
       };
     }
 
-    const threadId = thread.thread_id || thread.channel_id;
+    threadId = thread.thread_id || thread.channel_id;
     await createExecution(threadId, message.id);
 
     log.info('Phase: FORMAT_HISTORY');
@@ -97,7 +99,15 @@ export async function processMessage(
     await s3Sync.syncFromS3(threadId);
 
     // 2. Sync latest attachments from Discord to workspace
-    const syncResult = await discordFileSync.syncToWorkspace(client, threadId);
+    // CRITICAL: Only sync if we are in a thread. NOT the main channel.
+    // Syncing main channel would download ALL history attachments.
+    let syncResult: SyncResult = { synced: [], added: [], updated: [] };
+
+    if (thread.thread_id) {
+      syncResult = await discordFileSync.syncToWorkspace(client, thread.thread_id);
+    } else {
+      log.info('Skipping workspace file sync (not in a thread yet)');
+    }
     const newFilesMessage = discordFileSync.getNewFilesMessage(syncResult);
 
     await markExecutionProcessing(executionId);
@@ -154,10 +164,6 @@ export async function processMessage(
       gemini_response: { response_length: flowResult.response.length },
     });
 
-    // Phase: S3_SYNC (Outbound)
-    log.info('Phase: S3_SYNC');
-    await s3Sync.syncToS3(threadId);
-
     log.info('Phase: SEND_RESPONSE');
     await formatAndSendResponse({
       response: flowResult.response,
@@ -192,5 +198,15 @@ export async function processMessage(
       responded: false,
       error: errorMessage,
     };
+  } finally {
+    // Phase: S3_SYNC (Outbound) - Always runs to preserve artifacts
+    if (threadId) {
+      log.info('Phase: S3_SYNC');
+      try {
+        await s3Sync.syncToS3(threadId);
+      } catch (syncError) {
+        log.error(`Failed to sync to S3 in finally block: ${syncError}`);
+      }
+    }
   }
 }
