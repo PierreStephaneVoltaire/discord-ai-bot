@@ -1,5 +1,6 @@
 import { EmbedBuilder, TextChannel, ThreadChannel, Message } from 'discord.js';
 import { getDiscordClient } from '../discord/index';
+import { getChatClient } from '../chat';
 import { createLogger } from '../../utils/logger';
 
 const log = createLogger('AGENTIC:PROGRESS');
@@ -77,6 +78,19 @@ export async function streamProgressToDiscord(
   update: ProgressUpdate
 ): Promise<void> {
   try {
+  const chatClient = getChatClient();
+    if (chatClient && chatClient.platform !== 'discord') {
+      const summary = update.clarificationMessage
+        || update.promptPreview
+        || update.phase
+        || update.status
+        || update.type;
+      await chatClient.sendMessage(threadId, {
+        content: `**${update.type}** ${summary ? `- ${summary}` : ''}`,
+      });
+      return;
+    }
+
     const client = getDiscordClient();
     const channel = await client.channels.fetch(threadId);
 

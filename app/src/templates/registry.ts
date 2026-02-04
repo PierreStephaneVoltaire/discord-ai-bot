@@ -24,6 +24,7 @@ export const AGENT_MODEL_TIER_MAP: Record<AgentRole, keyof typeof MODEL_TIERS> =
   [AgentRole.DOCUMENTATION_WRITER]: 'tier3', // Needs tools
   [AgentRole.DBA]: 'tier3',               // Needs tools
   [AgentRole.RESEARCHER]: 'tier2',        // Needs tools
+  [AgentRole.SHELL_COMMANDER]: 'tier2',   // Shell commands - tier2, no tools needed
 };
 
 /**
@@ -55,6 +56,7 @@ export const AGENT_MODEL_INDEX_MAP: Partial<Record<AgentRole, number>> = {
   [AgentRole.CODE_REVIEWER]: 3,
   [AgentRole.DOCUMENTATION_WRITER]: 0,
   [AgentRole.DBA]: 2,
+  [AgentRole.SHELL_COMMANDER]: 0,  // Random tier2 model for shell commands
 };
 
 /**
@@ -64,7 +66,7 @@ export const AGENT_MODEL_INDEX_MAP: Partial<Record<AgentRole, number>> = {
  * - If index < 0: use last model in tier
  * - If index valid: use that model
  */
-function getModelFromTier(tier: keyof typeof MODEL_TIERS, index: number = 0): string {
+export function getModelFromTier(tier: keyof typeof MODEL_TIERS, index: number = 0): string {
   const models = MODEL_TIERS[tier] as readonly string[];
 
   // Handle out of bounds
@@ -97,6 +99,7 @@ export const AGENT_TEMPLATE_MAP: Record<AgentRole, string> = {
   [AgentRole.DOCUMENTATION_WRITER]: 'documentation-writer',
   [AgentRole.DBA]: 'dba',
   [AgentRole.RESEARCHER]: 'researcher',
+  [AgentRole.SHELL_COMMANDER]: 'shell-command',
 };
 
 // Tasks that use agentic loop
@@ -119,6 +122,9 @@ export const TASK_TYPE_TO_PROMPT: Record<string, string> = {
   [TaskType.SOCIAL]: 'social',
   [TaskType.GENERAL_CONVO]: 'general',
   [TaskType.WRITING]: 'general',
+
+  // Shell commands (no tools needed)
+  [TaskType.SHELL_COMMAND]: 'shell-command',
 };
 
 // Map task types to tier indices for simple flows
@@ -134,6 +140,9 @@ export const TASK_TYPE_TO_TIER_INDEX: Record<string, { tier: keyof typeof MODEL_
   [TaskType.SOCIAL]: { tier: 'tier1', index: 0 },
   [TaskType.GENERAL_CONVO]: { tier: 'tier1', index: 2 },
   [TaskType.WRITING]: { tier: 'tier3', index: 0 },
+
+  // Shell commands - use random tier2 model
+  [TaskType.SHELL_COMMAND]: { tier: 'tier2', index: 0 },
 };
 
 // Helper function to get model from tier and index

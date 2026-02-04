@@ -7,6 +7,7 @@ import {
   markExecutionFailed,
   updateExecution,
 } from '../modules/dynamodb/executions';
+import { getSession } from '../modules/dynamodb/sessions';
 import type { DiscordMessagePayload } from '../modules/discord/types';
 import { filterMessage } from './filter';
 import { detectThread, shouldProcess } from './thread';
@@ -19,6 +20,10 @@ import {
   executeSequentialThinkingFlow, // Renamed from agentic
   executeBranchFlow,             // NEW
   executeSimpleFlow,
+  executeShellFlow,              // NEW: Shell command suggestions
+  executeArchitectureFlow,       // NEW: Architecture/design flow
+  executeSocialFlow,             // NEW: Social interactions (tier 1)
+  executeProofreaderFlow,        // NEW: Grammar/spellcheck (tier 1)
   type FlowContext,
 } from './flows';
 import type { PipelineResult } from './types';
@@ -26,6 +31,7 @@ import { FlowType } from '../modules/litellm/types';
 import { s3Sync } from '../modules/workspace/s3-sync';
 import { discordFileSync, type SyncResult } from '../modules/workspace/file-sync';
 import { getDiscordClient } from '../modules/discord/index';
+import { getChatClient } from '../modules/chat';
 
 const log = createLogger('PIPELINE');
 
@@ -92,21 +98,33 @@ export async function processMessage(
     }
 
     // Phase: WORKSPACE_SYNC (Inbound)
-    log.info('Phase: WORKSPACE_SYNC');
-    const client = getDiscordClient();
-
-    // 1. Restore from S3 to workspace
-    await s3Sync.syncFromS3(threadId);
-
-    // 2. Sync latest attachments from Discord to workspace
-    // CRITICAL: Only sync if we are in a thread. NOT the main channel.
-    // Syncing main channel would download ALL history attachments.
+    // CRITICAL: Only sync workspace if we are in a thread
+    // Social/proofreader flows don't need workspace, skip S3 sync for efficiency
+    const isSocialOrProofreader = respondDecision.task_type === 'social' || respondDecision.task_type === 'proofreader';
     let syncResult: SyncResult = { synced: [], added: [], updated: [] };
+    
+    if (thread.is_thread && !isSocialOrProofreader) {
+      log.info('Phase: WORKSPACE_SYNC');
+      const chatClient = getChatClient();
+      const client = getDiscordClient();
 
-    if (thread.thread_id) {
-      syncResult = await discordFileSync.syncToWorkspace(client, thread.thread_id);
+      // 1. Restore from S3 to workspace
+      await s3Sync.syncFromS3(threadId);
+
+      // 2. Sync latest attachments from Discord to workspace
+      // CRITICAL: Only sync if we are in a thread. NOT the main channel.
+      // Syncing main channel would download ALL history attachments.
+      if (thread.thread_id) {
+        if (chatClient && chatClient.platform !== 'discord') {
+          log.info('Skipping discord file sync for non-Discord platform');
+        } else {
+          syncResult = await discordFileSync.syncToWorkspace(client, thread.thread_id);
+        }
+      } else {
+        log.info('Skipping workspace file sync (not in a thread yet)');
+      }
     } else {
-      log.info('Skipping workspace file sync (not in a thread yet)');
+      log.info(`Skipping WORKSPACE_SYNC (not in thread or simple flow: ${respondDecision.task_type})`);
     }
     const newFilesMessage = discordFileSync.getNewFilesMessage(syncResult);
 
@@ -133,21 +151,38 @@ export async function processMessage(
         filterResult.context.breakglass_model
       );
     } else {
+      // Get session for confidence score
+      const session = await getSession(threadId);
+      const confidenceScore = session?.confidence_score;
+
       log.info('Phase: CLASSIFY');
       const flowType = classifyFlow(
         respondDecision.is_technical,
         respondDecision.task_type,
         false,
         filterResult.context,
-        message.content
+        message.content,
+        confidenceScore
       );
 
       switch (flowType) {
         case FlowType.SEQUENTIAL_THINKING:
           flowResult = await executeSequentialThinkingFlow(flowContext, message);
           break;
+        case FlowType.ARCHITECTURE:
+          flowResult = await executeArchitectureFlow(flowContext, message);
+          break;
+        case FlowType.SOCIAL:
+          flowResult = await executeSocialFlow(flowContext);
+          break;
+        case FlowType.PROOFREADER:
+          flowResult = await executeProofreaderFlow(flowContext);
+          break;
         case FlowType.BRANCH:
           flowResult = await executeBranchFlow(flowContext);
+          break;
+        case FlowType.SHELL:
+          flowResult = await executeShellFlow(flowContext);
           break;
         case FlowType.SIMPLE:
         default:

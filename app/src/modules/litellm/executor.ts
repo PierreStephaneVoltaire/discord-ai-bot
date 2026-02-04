@@ -32,6 +32,7 @@ Use the provided tools to:
   log.info(`User prompt length: ${context.userPrompt.length}`);
   log.info(`Tools provided: ${tools.map(t => t.function.name).join(', ')}`);
 
+  const startTime = Date.now();
   const response = await chatCompletion({
     model: context.model || 'gemini-3-pro',
     messages: [
@@ -41,6 +42,8 @@ Use the provided tools to:
     tools: tools,
     tool_choice: 'auto',
   });
+  const elapsedMs = Date.now() - startTime;
+  log.info(`⏱️ executeTask completed in ${elapsedMs}ms`);
 
   const content = extractContent(response);
   const toolCallCount = response.choices?.[0]?.message?.tool_calls?.length || 0;
@@ -74,6 +77,7 @@ export async function executeSimpleTask(
     }
   }
 
+  const startTime = Date.now();
   const response = await chatCompletion({
     model: model || 'gemini-3-pro',
     messages: [
@@ -83,6 +87,8 @@ export async function executeSimpleTask(
     tools: enableTools && tools.length > 0 ? tools : undefined,
     tool_choice: enableTools && tools.length > 0 ? 'auto' : undefined,
   });
+  const elapsedMs = Date.now() - startTime;
+  log.info(`⏱️ executeSimpleTask completed in ${elapsedMs}ms`);
 
   const content = extractContent(response);
   const toolCallCount = response.choices?.[0]?.message?.tool_calls?.length || 0;

@@ -4,7 +4,7 @@ An autonomous multi-agent Discord bot that can execute complex multi-turn tasks,
 
 **Key Features:**
 - 🤖 Multi-turn agentic execution with **Reflexion** learning pattern
-- 🧠 **Chain-of-Thought** prompting for step-by-step reasoning
+- 🧠 **Sequential Thinking** - Planning model thinks step-by-step before generating plans
 - 🗂️ Per-thread S3 artifact storage with automatic file sync
 - 🎯 Specialized agent roles (Python coder, DevOps engineer, Architect, etc.)
 - 📈 Automatic model escalation (Gemini → Sonnet → Opus)
@@ -14,12 +14,13 @@ An autonomous multi-agent Discord bot that can execute complex multi-turn tasks,
 - 📊 Full observability (DynamoDB logs, SQS events, Discord progress)
 - 🔒 Thread-safe execution with abort flags
 - ⚡ Intelligent task classification and routing
+- 🏗️ **Architecture Flow** - Design/planning mode without code generation
 
 ## Architecture
 
 ### Execution Flows
 
-The bot supports 4 execution flows based on task classification:
+The bot supports 5 execution flows based on task classification:
 
 ```
 User Message
@@ -31,18 +32,40 @@ User Message
     ├─→ SIMPLE (social, general chat)
     │   └─→ Single turn, no tools, no planning
     │
+    ├─→ ARCHITECTURE (design/planning WITHOUT code)
+    │   └─→ Generates clear, succinct architectural plans
+    │   └─→ NO code generation - theoretical/design only
+    │   └─→ Confidence: completeness, conflicting info, holes identified
+    │   └─→ Can transition to SEQUENTIAL-THINKING on "implement this"
+    │
     ├─→ BRANCH (multi-solution brainstorming)
     │   └─→ Multiple models explore different architectural approaches
     │   └─→ Theoretical only, no code generation
     │
-    ├─→ SEQUENTIAL-THINKING (complex multi-turn with Reflexion)
+    ├─→ SEQUENTIAL-THINKING (complex multi-turn with code generation)
     │   └─→ Chain-of-Thought execution with self-reflection
+    │   └─→ CODE GENERATION with MCP tools
     │   └─→ Per-thread artifact storage in S3
     │   └─→ Evaluator scores trajectory → Opus reflects
+    │
+    ├─→ SHELL (command suggestions)
+    │   └─→ Suggests ready-to-run shell commands
+    │   └─→ NO scripts - one-liners only
     │
     └─→ BREAKGLASS (emergency override)
         └─→ Direct Opus access, bypasses all checks
 ```
+
+### Flow Selection Guide
+
+| Flow | Use Case | Code? | Tools? | Example Triggers |
+|------|----------|-------|--------|------------------|
+| **SIMPLE** | Quick Q&A, social | ❌ No | ❌ No | "What is...", "How do I..." |
+| **ARCHITECTURE** | Design, planning | ❌ No | ❌ No | "Design a system...", "What's the best approach..." |
+| **BRANCH** | Explore alternatives | ❌ No | ❌ No | "Compare approaches...", "Pros and cons..." |
+| **SEQUENTIAL** | Implementation | ✅ Yes | ✅ Yes | "Implement...", "Refactor...", "Create..." |
+| **SHELL** | Command help | ❌ No | ❌ No | "How to grep...", "kubectl command..." |
+| **BREAKGLASS** | Emergency | ✅ Yes | ✅ Yes | `!breakglass` prefix |
 
 ### Reflexion Learning Pattern
 
@@ -192,7 +215,34 @@ Users directly influence the bot's confidence through reactions:
 
 This creates a feedback loop where user satisfaction directly impacts the bot's decision-making.
 
-### 5. Branch Flow (Multi-Solution Brainstorming)
+### 5. Architecture Flow (Design & Planning)
+
+For theoretical/design tasks that require planning WITHOUT code generation.
+
+**Process:**
+1. Opus analyzes the request using Sequential Thinking
+2. Generates a clear, succinct architectural plan
+3. NO code is generated - only design and recommendations
+4. Confidence based on: completeness, conflicting info, facts captured, holes identified
+
+**Key Differences from Sequential-Thinking:**
+| Aspect | Architecture Flow | Sequential-Thinking Flow |
+|--------|-------------------|-------------------------|
+| Output | Design/Plan only | Code + Implementation |
+| Tools | None | MCP tools for file ops |
+| Confidence | Completeness, clarity | Code quality, progress |
+| Reflection | Design gaps, conflicts | Code issues, efficiency |
+
+**Triggers:**
+- "Design a system for..."
+- "What's the best approach for..."
+- "How should I architect..."
+- "Plan out the implementation of..."
+
+**Flow Transition:**
+When user says "implement this" or "execute the plan", the bot switches to SEQUENTIAL-THINKING flow for actual code generation.
+
+### 6. Branch Flow (Multi-Solution Brainstorming)
 
 Trigger with phrases like "different approaches", "pros and cons", "explore options":
 
@@ -222,7 +272,7 @@ app/
 │   │   │   ├── events.ts     # SQS event emission
 │   │   │   └── README.md     # Module documentation
 │   │   ├── reflexion/        # Reflexion learning pattern
-│   │   │   ├── evaluator.ts  # Trajectory evaluation
+│   │   │   ├── evaluator.ts  # Trajectory evaluation (code + architecture)
 │   │   │   ├── memory.ts     # Reflection management
 │   │   │   └── types.ts      # Reflexion interfaces
 │   │   ├── workspace/        # Per-thread S3 artifact storage
@@ -239,12 +289,14 @@ app/
 │   │   └── README.md         # Handler documentation
 │   ├── pipeline/             # Message processing pipeline
 │   │   └── flows/
-│   │       ├── sequential-thinking.ts  # Reflexion flow
+│   │       ├── sequential-thinking.ts  # Code generation flow
+│   │       ├── architecture.ts         # Design/planning flow (NEW)
 │   │       ├── branch.ts               # Multi-solution brainstorming
 │   │       ├── simple.ts               # Quick responses
+│   │       ├── shell.ts                # Command suggestions
 │   │       └── breakglass.ts           # Emergency override
-│   ├── templates/            # Prompt templates with CoT
-│   │   ├── planning.txt      # Opus planning with reflection
+│   ├── templates/            # Prompt templates with Sequential Thinking
+│   │   ├── planning.txt      # Opus planning with step-by-step reasoning
 │   │   └── prompts/
 │   │       ├── coding.txt    # CoT for implementation
 │   │       ├── devops.txt
@@ -493,8 +545,30 @@ export const AGENT_MODEL_INDEX_MAP = {
 
 - [Agentic Module](app/src/modules/agentic/README.md) - Multi-turn execution
 - [Handlers Module](app/src/handlers/README.md) - Reaction & debounce handlers
+- [Reflexion Module](app/src/modules/reflexion/README.md) - Learning from past attempts
 - [Infrastructure](terraform/README.md) - Terraform configuration
 - [Adding Models Guide](docs/ADDING-MODELS.md) - How to add new LLM models
+
+## Changelog
+
+### Latest Changes
+
+#### Architecture Flow (NEW)
+- Added `ARCHITECTURE` flow type for design/planning tasks without code generation
+- Flow routes `architecture-analysis` and design questions to planning-only mode
+- Confidence evaluation focuses on: completeness, conflicting info, holes identified
+- Can transition to `SEQUENTIAL_THINKING` when user requests implementation
+
+#### Planning Prompt Improvements
+- Added **Sequential Thinking Process** to planning prompt
+- Planning model (Opus) now thinks step-by-step before generating output
+- Steps: Analyze → Identify Domain → Assess Complexity → Determine Continuity → Plan → Draft → Review
+
+#### Architecture-Specific Evaluation
+- Added `evaluateArchitectureTrajectory()` method to evaluator
+- Metrics: Task completion, Design quality, Efficiency
+- NO code quality metrics (since no code is generated)
+- Focus on design clarity and completeness
 
 ## Contributing
 

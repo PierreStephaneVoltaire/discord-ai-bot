@@ -31,7 +31,7 @@ variable "discord_bot_id" {
 variable "discord_guild_id" {
   description = "Discord Guild ID"
   type        = string
-  default     = "1007381699346301038"
+  default     = "12222222222222"
 }
 
 variable "litellm_base_url" {
@@ -63,3 +63,91 @@ variable "s3_artifact_bucket" {
   type        = string
   default     = "psv-discord-bot-artifacts"
 }
+
+variable "redis_enabled" {
+  description = "Enable Redis for hot state management"
+  type        = bool
+  default     = true
+}
+
+variable "stoat_token" {
+  description = "Stoat bot token (for Stoat platform support)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stoat_bot_id" {
+  description = "Stoat bot user ID"
+  type        = string
+  default     = ""
+}
+
+variable "chat_platform" {
+  description = "Chat platform to use: discord, stoat, or both"
+  type        = string
+  default     = "discord"
+}
+
+
+
+variable "stoat_rabbitmq_user" {
+  description = "RabbitMQ username for Stoat"
+  type        = string
+  sensitive   = true
+  default     = "rabbituser"
+}
+
+variable "stoat_rabbitmq_pass" {
+  description = "RabbitMQ password for Stoat"
+  type        = string
+  sensitive   = true
+  default     = "rabbitpass"
+}
+
+variable "stoat_minio_user" {
+  description = "MinIO root username for Stoat"
+  type        = string
+  sensitive   = true
+  default     = "minioautumn"
+}
+
+variable "stoat_minio_pass" {
+  description = "MinIO root password for Stoat"
+  type        = string
+  sensitive   = true
+  default     = "minioautumn"
+}
+
+variable "stoat_encryption_key" {
+  description = "Encryption key for Stoat file storage (generate with: openssl rand -base64 32)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stoat_vapid_private_key" {
+  description = "VAPID private key for Stoat push notifications"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stoat_vapid_public_key" {
+  description = "VAPID public key for Stoat push notifications"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+# ============================================
+# GATEWAY VARIABLES
+# ============================================
+
+variable "domain" {
+  description = "Main domain for services (e.g., example.com)"
+  type        = string
+  default     = "example.com"
+}
+
+

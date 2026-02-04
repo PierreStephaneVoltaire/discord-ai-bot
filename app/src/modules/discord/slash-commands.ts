@@ -9,6 +9,7 @@ import {
   Client,
 } from 'discord.js';
 import { getLock, hasActiveLock } from '../agentic/lock';
+import { checkAbortFlag, checkLock, getThreadState, getCachedSession } from '../redis';
 import { getSession, updateSession } from '../dynamodb/sessions';
 import { listS3Files, formatFileTree, deleteS3Prefix, getS3File } from '../workspace/s3-helpers';
 import { workspaceManager } from '../workspace/manager';
@@ -198,6 +199,10 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
   const threadId = interaction.channelId;
   const lock = getLock(threadId);
   const session = await getSession(threadId);
+  const redisLockOwner = await checkLock(threadId);
+  const redisAbort = await checkAbortFlag(threadId);
+  const redisState = await getThreadState(threadId);
+  const cachedSession = await getCachedSession(threadId);
 
   const embed = new EmbedBuilder()
     .setTitle('📊 Execution Status')
@@ -213,7 +218,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
     });
     embed.addFields({
       name: '🛑 Abort Flag',
-      value: lock.abort ? '**SET**' : 'Not set',
+      value: lock.abort || redisAbort ? '**SET**' : 'Not set',
       inline: true,
     });
   } else {
@@ -221,6 +226,30 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
       name: '🔒 Lock Status',
       value: 'Unlocked',
       inline: true,
+    });
+  }
+
+  if (redisLockOwner) {
+    embed.addFields({
+      name: '🧠 Redis Lock',
+      value: `Owner: ${redisLockOwner}`,
+      inline: true,
+    });
+  }
+
+  if (redisState) {
+    embed.addFields({
+      name: '⚡ Redis State',
+      value: `State: ${redisState.state}\nTurn: ${redisState.turn}\nConfidence: ${redisState.confidence}%`,
+      inline: false,
+    });
+  }
+
+  if (cachedSession) {
+    embed.addFields({
+      name: '💾 Redis Session Cache',
+      value: `Turn: ${cachedSession.currentTurn}\nModel: ${cachedSession.model}\nUpdated: ${cachedSession.updatedAt}`,
+      inline: false,
     });
   }
 

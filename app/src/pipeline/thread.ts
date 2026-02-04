@@ -1,5 +1,8 @@
 import { ChannelType } from 'discord.js';
 import { getDiscordClient, getChannel } from '../modules/discord/index';
+import { getChatClient } from '../modules/chat';
+import type { ChannelInfo } from '../modules/discord/types';
+import type { ChatChannel } from '../modules/chat/types';
 import { createLogger } from '../utils/logger';
 import type { DiscordMessagePayload } from '../modules/discord/types';
 import type { ThreadContext } from './types';
@@ -17,10 +20,12 @@ export async function detectThread(
 ): Promise<ThreadContext> {
   log.info('Detecting thread context');
 
-  const client = getDiscordClient();
-  const channelInfo = await getChannel(client, message.channel_id);
+  const chatClient = getChatClient();
+  const channelInfo = (chatClient
+    ? await chatClient.getChannel(message.channel_id)
+    : await getChannel(getDiscordClient(), message.channel_id)) as (ChatChannel | ChannelInfo | null);
 
-  const channelType = channelInfo.type;
+  const channelType = typeof channelInfo?.type === 'number' ? channelInfo.type : 0;
   const typeName = CHANNEL_TYPE_NAMES[channelType] || `UNKNOWN(${channelType})`;
   log.info(`Channel type: ${channelType} (${typeName})`);
 
@@ -28,10 +33,14 @@ export async function detectThread(
     channelType === ChannelType.PublicThread ||
     channelType === ChannelType.PrivateThread;
 
+  log.info(`Thread detection: channelType=${channelType}, PublicThread=${ChannelType.PublicThread}, PrivateThread=${ChannelType.PrivateThread}`);
+  log.info(`isThreadChannel=${isThreadChannel}`);
+
   const hasThread = !!message.thread;
+  log.info(`hasThread property=${hasThread}`);
 
   const isThread = isThreadChannel || hasThread;
-  log.info(`Is thread: ${isThread}`);
+  log.info(`Final is_thread=${isThread}`);
 
   let threadId: string | null = null;
   if (isThreadChannel) {
@@ -41,15 +50,18 @@ export async function detectThread(
   }
 
   log.info(`Thread ID: ${threadId || 'none'}`);
-  log.info(`Parent ID: ${channelInfo.parent_id || 'none'}`);
+  const parentId = (channelInfo as { parent_id?: string | null; parentId?: string | null } | null)?.parent_id
+    ?? (channelInfo as { parent_id?: string | null; parentId?: string | null } | null)?.parentId
+    ?? null;
+  log.info(`Parent ID: ${parentId || 'none'}`);
 
   return {
     is_thread: isThread,
     thread_id: threadId,
     channel_id: message.channel_id,
-    channel_name: channelInfo.name,
+    channel_name: channelInfo?.name || 'unknown',
     channel_type: channelType,
-    parent_id: channelInfo.parent_id,
+    parent_id: parentId,
   };
 }
 

@@ -1,5 +1,5 @@
 import type { DiscordMessagePayload, DiscordAttachment } from '../modules/discord/types';
-import type { Session } from '../modules/dynamodb/types';
+import type { Session, PollHistoryEntry } from '../modules/dynamodb/types';
 import type { PlanningResult } from '../modules/litellm/types';
 
 export interface FilterContext {
@@ -38,6 +38,7 @@ export interface FormattedHistory {
   current_message: string;
   current_author: string;
   current_attachments: AttachmentCategory;
+  poll_entries?: PollHistoryEntry[];
 }
 
 export interface ProcessedAttachment {

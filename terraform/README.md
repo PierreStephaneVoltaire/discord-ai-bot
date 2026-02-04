@@ -1,6 +1,6 @@
 # Infrastructure Configuration
 
-Terraform configuration for deploying the Discord bot to Kubernetes with AWS services.
+Terraform configuration for deploying the Discord bot and Stoat (Revolt) self-hosted chat platform to Kubernetes with AWS services.
 
 ## Architecture
 
@@ -11,30 +11,46 @@ Terraform configuration for deploying the Discord bot to Kubernetes with AWS ser
 │  │  discord-bot namespace                                │  │
 │  │  ├─ discord-bot deployment (1 replica)               │  │
 │  │  │  └─ Health/Ready endpoints on :3000               │  │
-│  │  └─ dev-sandbox deployment (1 replica)               │  │
-│  │     └─ Persistent workspace for code execution       │  │
+│  │  ├─ dev-sandbox deployment (1 replica)               │  │
+│  │  │  └─ Persistent workspace for code execution       │  │
+│  │  ├─ redis statefulset (1 replica)                    │  │
+│  │  │  └─ Hot state management                          │  │
+│  │  │                                                    │  │
+│  │  └─ STOAT PLATFORM (Revolt Self-Hosted)              │  │
+│  │     ├─ stoat-api (API server)                        │  │
+│  │     ├─ stoat-events (WebSocket events)               │  │
+│  │     ├─ stoat-web (Web client)                        │  │
+│  │     ├─ stoat-autumn (File server)                    │  │
+│  │     ├─ stoat-january (Metadata proxy)                │  │
+│  │     ├─ stoat-gifbox (Tenor proxy)                    │  │
+│  │     ├─ stoat-crond (Scheduled tasks)                 │  │
+│  │     ├─ stoat-pushd (Push notifications)              │  │
+│  │     ├─ stoat-caddy (Reverse proxy)                   │  │
+│  │     ├─ stoat-mongodb (Database)                      │  │
+│  │     ├─ stoat-rabbitmq (Message broker)               │  │
+│  │     └─ stoat-minio (S3 storage)                      │  │
 │  └──────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
-                            │
-                            ├─────────────────────────────────┐
-                            │                                 │
-                            ▼                                 ▼
-                    ┌───────────────┐              ┌──────────────────┐
-                    │  AWS DynamoDB │              │    AWS SQS       │
-                    ├───────────────┤              ├──────────────────┤
-                    │ Sessions      │              │ agentic-events   │
-                    │ Executions    │              │ discord-messages │
-                    │ Messages      │              │ (+ DLQs)         │
-                    │ Chat History  │              └──────────────────┘
-                    └───────────────┘
-                            │
-                            ▼
-                    ┌───────────────┐
-                    │   AWS ECR     │
-                    ├───────────────┤
-                    │ discord-bot   │
-                    │ dev-sandbox   │
-                    └───────────────┘
+                             │
+                             ├─────────────────────────────────┐
+                             │                                 │
+                             ▼                                 ▼
+                     ┌───────────────┐              ┌──────────────────┐
+                     │  AWS DynamoDB │              │    AWS SQS       │
+                     ├───────────────┤              ├──────────────────┤
+                     │ Sessions      │              │ agentic-events   │
+                     │ Executions    │              │ discord-messages │
+                     │ Messages      │              │ (+ DLQs)         │
+                     │ Chat History  │              └──────────────────┘
+                     └───────────────┘
+                             │
+                             ▼
+                     ┌───────────────┐
+                     │   AWS ECR     │
+                     ├───────────────┤
+                     │ discord-bot   │
+                     │ dev-sandbox   │
+                     └───────────────┘
 ```
 
 ## Components
@@ -163,6 +179,83 @@ litellm_base_url    = "http://litellm.ai-platform.svc.cluster.local:4000"
 litellm_api_key     = "..."
 do_token            = "..."
 do_cluster_name     = "discord-bot-cluster"
+
+# Stoat (Revolt) Self-Hosted Configuration (optional)
+stoat_domain            = "stoat.example.com"
+stoat_rabbitmq_user     = "rabbituser"
+stoat_rabbitmq_pass     = "rabbitpass"
+stoat_minio_user        = "minioautumn"
+stoat_minio_pass        = "minioautumn"
+# stoat_encryption_key is auto-generated if not specified
+stoat_vapid_private_key = ""  # Generate with stoat/self-hosted/generate_config.sh
+stoat_vapid_public_key  = ""  # Generate with stoat/self-hosted/generate_config.sh
+```
+
+## Stoat (Revolt) Self-Hosted Platform
+
+The Stoat platform is deployed alongside the Discord bot in the same namespace. It provides a self-hosted chat platform alternative.
+
+### Stoat Components
+
+| Service | Image | Purpose | Port |
+|---------|-------|---------|------|
+| `stoat-api` | `ghcr.io/revoltchat/server:20250930-2` | API server | 3000 |
+| `stoat-events` | `ghcr.io/revoltchat/bonfire:20250930-2` | WebSocket events | 3000 |
+| `stoat-web` | `ghcr.io/revoltchat/client:master` | Web client | 5000 |
+| `stoat-autumn` | `ghcr.io/revoltchat/autumn:20250930-2` | File server | 3000 |
+| `stoat-january` | `ghcr.io/revoltchat/january:20250930-2` | Metadata proxy | 3000 |
+| `stoat-gifbox` | `ghcr.io/revoltchat/gifbox:20250930-2` | Tenor GIF proxy | 3000 |
+| `stoat-crond` | `ghcr.io/revoltchat/crond:20250930-2` | Scheduled tasks | - |
+| `stoat-pushd` | `ghcr.io/revoltchat/pushd:20250930-2` | Push notifications | - |
+| `stoat-caddy` | `public.ecr.aws/docker/library/caddy:2` | Reverse proxy | 80/443 |
+| `stoat-mongodb` | `public.ecr.aws/docker/library/mongo:7` | Database | 27017 |
+| `stoat-rabbitmq` | `public.ecr.aws/docker/library/rabbitmq:4` | Message broker | 5672/15672 |
+| `stoat-minio` | `public.ecr.aws/docker/library/minio:latest` | S3 storage | 9000/9001 |
+
+### Stoat Dependencies
+
+```
+stoat-api → mongodb, redis, rabbitmq
+stoat-events → mongodb, redis
+stoat-autumn → mongodb, minio
+stoat-crond → mongodb, minio
+stoat-pushd → mongodb, redis, rabbitmq
+```
+
+### Generate Stoat Configuration
+
+The encryption key is automatically generated by Terraform if not provided. To use a custom key or view the generated one:
+
+```bash
+# After terraform apply, the generated key will be shown in output
+# Or retrieve it from state:
+terraform state show random_password.stoat_encryption_key[0]
+```
+
+Before deploying, generate VAPID keys for push notifications:
+
+```bash
+cd stoat/self-hosted
+./generate_config.sh your-domain.com
+```
+
+Copy the generated values to your `terraform.tfvars`:
+- `stoat_vapid_private_key` from `[pushd.vapid]` section
+- `stoat_vapid_public_key` from `[pushd.vapid]` section
+
+Note: `stoat_encryption_key` is auto-generated if not specified.
+
+### Access Stoat
+
+After deployment, access Stoat via the LoadBalancer IP or configure DNS:
+
+```bash
+# Get the external IP
+kubectl get service stoat-caddy -n discord-bot
+
+# Or port-forward for local testing
+kubectl port-forward service/stoat-caddy 8080:80 -n discord-bot
+# Access at http://localhost:8080
 ```
 
 ## Monitoring
@@ -172,6 +265,29 @@ do_cluster_name     = "discord-bot-cluster"
 ```bash
 kubectl get pods -n discord-bot
 kubectl logs -f deployment/discord-bot -n discord-bot
+```
+
+### Check Stoat Services
+
+```bash
+# List all Stoat pods
+kubectl get pods -n discord-bot -l app=stoat-api
+kubectl get pods -n discord-bot -l app=stoat-web
+
+# Check logs
+kubectl logs -f deployment/stoat-api -n discord-bot
+kubectl logs -f deployment/stoat-events -n discord-bot
+
+# Check MongoDB
+kubectl logs -f deployment/stoat-mongodb -n discord-bot
+
+# Check RabbitMQ Management (port-forward)
+kubectl port-forward service/stoat-rabbitmq 15672:15672 -n discord-bot
+# Access at http://localhost:15672 (guest/guest or configured credentials)
+
+# Check MinIO Console (port-forward)
+kubectl port-forward service/stoat-minio 9001:9001 -n discord-bot
+# Access at http://localhost:9001
 ```
 
 ### Check DynamoDB
@@ -211,6 +327,38 @@ aws ecr describe-images \
 ```bash
 kubectl describe pod -n discord-bot -l app=discord-bot
 kubectl logs -n discord-bot -l app=discord-bot --previous
+
+# For Stoat pods
+kubectl describe pod -n discord-bot -l app=stoat-api
+kubectl logs -n discord-bot -l app=stoat-api --previous
+```
+
+### Stoat services not connecting
+
+```bash
+# Check if MongoDB is ready
+kubectl get pods -n discord-bot -l app=stoat-mongodb
+
+# Check if RabbitMQ is ready
+kubectl get pods -n discord-bot -l app=stoat-rabbitmq
+
+# Check service endpoints
+kubectl get endpoints -n discord-bot
+
+# Verify ConfigMap is mounted correctly
+kubectl exec -n discord-bot deployment/stoat-api -- cat /Revolt.toml
+```
+
+### MinIO bucket creation failed
+
+```bash
+# Check the job status
+kubectl get jobs -n discord-bot
+kubectl logs -n discord-bot job/stoat-minio-create-buckets
+
+# Re-run the job
+kubectl delete job stoat-minio-create-buckets -n discord-bot
+terraform apply -target=kubernetes_job.stoat_minio_create_buckets
 ```
 
 ### ECR pull errors
@@ -252,9 +400,9 @@ terraform destroy
 - DynamoDB: $5-20 (pay per request)
 - SQS: $0-5 (first 1M requests free)
 - ECR: $1-5 (storage)
-- DigitalOcean K8s: $12+ (cluster cost)
+- DigitalOcean K8s: $95+ (cluster cost)
 
-**Total: ~$20-50/month**
+**Total: ~$100-125/month**
 
 ## Security
 

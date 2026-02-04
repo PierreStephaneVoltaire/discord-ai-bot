@@ -3,6 +3,9 @@ import Fastify from 'fastify';
 import { loadConfig } from './config/index';
 import { createLogger } from './utils/logger';
 import { startDiscordBot, getDiscordClient } from './modules/discord/index';
+import { getChatClient } from './modules/chat';
+import type { ChatMessage } from './modules/chat/types';
+import type { DiscordMessagePayload } from './modules/discord/types';
 import { processMessage } from './pipeline/index';
 import { clearAllDebounceTimers } from './handlers/debounce';
 import { setupReactionHandlers } from './handlers/reactions';
@@ -84,25 +87,55 @@ async function main() {
     await fastify.listen({ port, host: '0.0.0.0' });
     log.info(`Health server listening on port ${port}`);
 
-    log.info('Starting Discord gateway connection');
-    const client = await startDiscordBot(async (message) => {
-      log.info(`Processing message ${message.id} from ${message.author.username}`);
+    if (config.CHAT_PLATFORM === 'discord') {
+      log.info('Starting Discord gateway connection');
+      const client = await startDiscordBot(async (message) => {
+        log.info(`Processing message ${message.id} from ${message.author.username}`);
 
-      const result = await processMessage(message);
+        const result = await processMessage(message);
 
-      if (result.error) {
-        log.error(`Message processing failed: ${result.error}`);
-      } else if (result.responded) {
-        log.info(`Message processed successfully, responded: ${result.responded}`);
-      } else {
-        log.info(`Message processed, no response needed`);
+        if (result.error) {
+          log.error(`Message processing failed: ${result.error}`);
+        } else if (result.responded) {
+          log.info(`Message processed successfully, responded: ${result.responded}`);
+        } else {
+          log.info(`Message processed, no response needed`);
+        }
+      });
+
+      // Setup reaction handlers after bot is started
+      setupReactionHandlers(client);
+
+      log.info('Discord bot started successfully');
+    } else {
+      log.info(`Starting chat client for platform: ${config.CHAT_PLATFORM}`);
+      const chatClient = getChatClient();
+      if (!chatClient) {
+        throw new Error(`CHAT_PLATFORM=${config.CHAT_PLATFORM} requires a non-Discord chat client`);
       }
-    });
 
-    // Setup reaction handlers after bot is started
-    setupReactionHandlers(client);
+      chatClient.onReady(async () => {
+        log.info(`Chat client ready: ${chatClient.platform}`);
+      });
 
-    log.info('Discord bot started successfully');
+      chatClient.onMessage(async (message: ChatMessage) => {
+        const payload = mapChatMessageToDiscordPayload(message);
+        log.info(`Processing ${chatClient.platform} message ${payload.id} from ${payload.author.username}`);
+
+        const result = await processMessage(payload);
+
+        if (result.error) {
+          log.error(`Message processing failed: ${result.error}`);
+        } else if (result.responded) {
+          log.info(`Message processed successfully, responded: ${result.responded}`);
+        } else {
+          log.info(`Message processed, no response needed`);
+        }
+      });
+
+      await chatClient.connect();
+      log.info(`${chatClient.platform} client started successfully`);
+    }
 
     process.on('SIGINT', async () => {
       log.info('Received SIGINT, shutting down');
@@ -124,3 +157,44 @@ async function main() {
 }
 
 main();
+
+function mapChatMessageToDiscordPayload(message: ChatMessage): DiscordMessagePayload {
+  return {
+    id: message.id,
+    channel_id: message.channelId,
+    guild_id: message.guildId,
+    content: message.content,
+    author: {
+      id: message.author.id,
+      username: message.author.username,
+      bot: message.author.bot,
+      global_name: message.author.displayName || message.author.username,
+    },
+    attachments: message.attachments.map((att) => ({
+      id: att.id,
+      filename: att.filename,
+      url: att.url,
+      proxy_url: att.url,
+      content_type: att.contentType,
+      size: att.size,
+    })),
+    mentions: message.mentions.map((mention) => ({
+      id: mention.id,
+      username: mention.username,
+      global_name: mention.username,
+    })),
+    timestamp: message.timestamp,
+    message_reference: message.replyTo
+      ? {
+          channel_id: message.replyTo.channelId,
+          message_id: message.replyTo.messageId,
+        }
+      : undefined,
+    thread: message.thread
+      ? {
+          id: message.thread.id,
+          name: message.thread.name,
+        }
+      : undefined,
+  };
+}

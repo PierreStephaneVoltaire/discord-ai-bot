@@ -65,12 +65,15 @@ export async function logTurnToDb(params: {
       ttl,
     };
 
+    const startTime = Date.now();
     await docClient.send(
       new PutCommand({
         TableName: TABLE_NAME,
         Item: logEntry,
       })
     );
+    const elapsedMs = Date.now() - startTime;
+    log.debug(`⏱️ DynamoDB logTurnToDb completed in ${elapsedMs}ms`);
 
     log.debug(`Logged turn ${params.turn} for thread ${params.threadId}`);
   } catch (error) {
@@ -97,6 +100,7 @@ export async function logExecutionStart(params: {
     // Generate execution_id as threadId-timestamp-start
     const execution_id = `${params.threadId}-${now.getTime()}-start`;
 
+    const startTime = Date.now();
     await docClient.send(
       new PutCommand({
         TableName: TABLE_NAME,
@@ -112,6 +116,8 @@ export async function logExecutionStart(params: {
         },
       })
     );
+    const elapsedMs = Date.now() - startTime;
+    log.info(`⏱️ DynamoDB logExecutionStart completed in ${elapsedMs}ms`);
 
     log.info(`Logged execution start for thread ${params.threadId}`);
   } catch (error) {
@@ -137,6 +143,7 @@ export async function logExecutionComplete(params: {
     // Generate execution_id as threadId-timestamp-end
     const execution_id = `${params.threadId}-${now.getTime()}-end`;
 
+    const startTime = Date.now();
     await docClient.send(
       new PutCommand({
         TableName: TABLE_NAME,
@@ -152,6 +159,8 @@ export async function logExecutionComplete(params: {
         },
       })
     );
+    const elapsedMs = Date.now() - startTime;
+    log.info(`⏱️ DynamoDB logExecutionComplete completed in ${elapsedMs}ms`);
 
     log.info(`Logged execution completion for thread ${params.threadId}`);
   } catch (error) {

@@ -1,6 +1,7 @@
 import { createLogger } from '../utils/logger';
 import { getDiscordClient } from '../modules/discord/index';
-import { abortLock, releaseLock } from '../modules/agentic/lock';
+import { abortLock } from '../modules/agentic/lock';
+import { setAbortFlag } from '../modules/redis';
 import { getCommitMessage, removeCommitMessage, mergeBranch, deleteBranch } from '../modules/agentic/commits';
 import { emitBranchMerged, emitBranchRejected, emitExecutionAborted } from '../modules/agentic/events';
 import { Client, MessageReaction, User, PartialMessageReaction, PartialUser } from 'discord.js';
@@ -115,7 +116,8 @@ async function handleAbortReaction(message: any, user: any): Promise<void> {
 
   log.info(`User ${user.username} requested abort for execution in channel ${message.channelId}`);
 
-  // Set abort flag on the lock
+  // Set abort flag on Redis (fallback to in-memory)
+  await setAbortFlag(message.channelId);
   abortLock(message.channelId);
 
   // Send confirmation message

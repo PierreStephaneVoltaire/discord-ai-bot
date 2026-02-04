@@ -1,6 +1,7 @@
 import { request } from 'undici';
 import { getConfig } from '../../config/index';
 import { createLogger } from '../../utils/logger';
+import { getLiteLLMAgent } from './agent';
 import type { ChatCompletionRequest, ChatCompletionResponse, Tool, McpTool, ToolCall } from './types';
 
 const log = createLogger('LITELLM');
@@ -19,13 +20,17 @@ export async function getTools(): Promise<Tool[]> {
   });
 
   try {
+    const startTime = Date.now();
     const response = await request(url, {
       method: 'GET',
       headers: {
         'accept': 'application/json',
         'x-litellm-api-key': config.LITELLM_API_KEY,
       },
+      dispatcher: getLiteLLMAgent(), // Use shared agent with connection pooling
     });
+    const elapsedMs = Date.now() - startTime;
+    log.info(`⏱️ LiteLLM getTools HTTP call completed in ${elapsedMs}ms`);
 
     log.info(`Response status: ${response.statusCode}`);
     log.info(`Response headers:`, response.headers);
@@ -122,6 +127,8 @@ export async function chatCompletion(
   const body = JSON.stringify(requestBody);
   log.info(`Request payload: ${body}`);
 
+  const startTime = Date.now();
+
   const response = await request(url, {
     method: 'POST',
     headers: {
@@ -129,9 +136,11 @@ export async function chatCompletion(
       Authorization: `Bearer ${config.LITELLM_API_KEY}`,
     },
     body,
+    dispatcher: getLiteLLMAgent(), // Use shared agent with connection pooling
   });
 
-  log.info(`Response received, status: ${response.statusCode}`);
+  const elapsedMs = Date.now() - startTime;
+  log.info(`⏱️ LiteLLM HTTP call completed in ${elapsedMs}ms, status: ${response.statusCode}`);
 
   if (response.statusCode !== 200) {
     const errorText = await response.body.text();
@@ -166,3 +175,4 @@ export function extractJsonFromContent<T>(content: string): T | null {
 export * from './opus';
 export * from './executor';
 export * from './types';
+export * from './agent'; // Export agent for connection management

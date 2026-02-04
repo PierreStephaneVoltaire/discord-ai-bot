@@ -31,12 +31,15 @@ export async function createExecution(
     ttl,
   };
 
+  const startTime = Date.now();
   await client.send(
     new PutCommand({
       TableName: config.DYNAMODB_EXECUTIONS_TABLE,
       Item: execution,
     })
   );
+  const elapsedMs = Date.now() - startTime;
+  log.info(`⏱️ DynamoDB createExecution completed in ${elapsedMs}ms`);
 
   log.info(`Execution created: ${executionId}`);
   return executionId;
@@ -68,6 +71,7 @@ export async function updateExecution(
     return;
   }
 
+  const startTime = Date.now();
   await client.send(
     new UpdateCommand({
       TableName: config.DYNAMODB_EXECUTIONS_TABLE,
@@ -77,6 +81,8 @@ export async function updateExecution(
       ExpressionAttributeValues: expressionAttributeValues,
     })
   );
+  const elapsedMs = Date.now() - startTime;
+  log.info(`⏱️ DynamoDB updateExecution completed in ${elapsedMs}ms`);
 
   log.info(`Execution updated: ${executionId}`);
 }
@@ -87,12 +93,15 @@ export async function getExecution(executionId: string): Promise<Execution | nul
   const client = getDynamoDBClient();
   const config = getConfig();
 
+  const startTime = Date.now();
   const result = await client.send(
     new GetCommand({
       TableName: config.DYNAMODB_EXECUTIONS_TABLE,
       Key: { execution_id: executionId },
     })
   );
+  const elapsedMs = Date.now() - startTime;
+  log.info(`⏱️ DynamoDB getExecution completed in ${elapsedMs}ms`);
 
   if (!result.Item) {
     log.info(`Execution not found: ${executionId}`);

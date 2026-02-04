@@ -26,6 +26,16 @@ import {
   isAborted
 } from './lock';
 import {
+  acquireLock as acquireRedisLock,
+  releaseLock as releaseRedisLock,
+  refreshLock as refreshRedisLock,
+  checkAbortFlag as checkRedisAbortFlag,
+  updateTurnState,
+  cacheSession,
+  deleteCachedSession,
+} from '../redis';
+import { generateExecutionId } from '../../utils/id';
+import {
   logTurnToDb,
   logExecutionStart,
   logExecutionComplete
@@ -235,8 +245,29 @@ export async function executeSequentialThinkingLoop(
 ): Promise<{ success: boolean; finalResponse: string; turns: ExecutionTurn[]; finalConfidence: number }> {
   log.info(`Starting sequential thinking loop for thread ${threadId} (Agent: ${config.agentRole})`);
 
-  // Create execution lock
+  // Track total loop elapsed time
+  const loopStartTime = Date.now();
+
+  const executionId = generateExecutionId();
+
+  // Create execution lock (Redis if available, fallback to in-memory)
+  const lockAcquired = await acquireRedisLock(threadId, executionId);
+  if (!lockAcquired) {
+    log.warn(`Unable to acquire lock for thread ${threadId}`);
+    return { success: false, finalResponse: 'Execution already in progress.', turns: [], finalConfidence: initialConfidence };
+  }
+
   const lock = createLock(threadId);
+
+  await cacheSession(threadId, {
+    threadId,
+    confidenceScore: initialConfidence,
+    currentTurn: 0,
+    model: config.model,
+    agentRole: config.agentRole,
+    workspacePath,
+    updatedAt: new Date().toISOString(),
+  });
 
   // Log execution start
   await logExecutionStart({
@@ -288,9 +319,13 @@ export async function executeSequentialThinkingLoop(
   while (state.turnNumber < config.maxTurns) {
     state.turnNumber++;
 
-    if (await isAborted(threadId)) {
+    const redisAbort = await checkRedisAbortFlag(threadId);
+    if (redisAbort || (await isAborted(threadId))) {
       log.info(`Execution aborted via lock for thread ${threadId}`);
       await emitExecutionAborted({ threadId, reason: 'user_stop' });
+      await releaseRedisLock(threadId);
+      await releaseLock(threadId);
+      await deleteCachedSession(threadId);
       return { success: false, finalResponse: 'Execution aborted.', turns, finalConfidence: state.confidenceScore };
     }
 
@@ -343,6 +378,24 @@ export async function executeSequentialThinkingLoop(
       }
 
       await updateLockTurn(threadId, state.turnNumber);
+      await updateTurnState(
+        threadId,
+        state.turnNumber,
+        state.confidenceScore,
+        currentModel,
+        turn.status,
+        executionId
+      );
+
+      await cacheSession(threadId, {
+        threadId,
+        confidenceScore: state.confidenceScore,
+        currentTurn: state.turnNumber,
+        model: currentModel,
+        agentRole: config.agentRole,
+        workspacePath,
+        updatedAt: new Date().toISOString(),
+      });
 
       updateExecutionState(state, turn);
       turns.push(turn);
@@ -441,6 +494,8 @@ export async function executeSequentialThinkingLoop(
       // Add to history for next turn
       conversationHistory.push({ role: 'assistant', content: turn.response });
 
+      await refreshRedisLock(threadId, executionId);
+
     } catch (error) {
       log.error(`Error in turn ${state.turnNumber}`, { error: String(error) });
       state.errorCount++;
@@ -458,6 +513,9 @@ export async function executeSequentialThinkingLoop(
 
   const finalResponse = turns[turns.length - 1]?.response || 'Execution finished but no response generated.';
 
+  // Calculate total loop elapsed time
+  const totalLoopElapsedMs = Date.now() - loopStartTime;
+
   // FIX: logExecutionComplete arguments
   await logExecutionComplete({
     threadId,
@@ -473,8 +531,9 @@ export async function executeSequentialThinkingLoop(
   });
 
   log.info(`🏁 Loop Complete. Total Token Usage -- Input: ${totalInputTokens} | Output: ${totalOutputTokens} | Combined: ${totalInputTokens + totalOutputTokens}`);
+  log.info(`⏱️ Total Loop Elapsed Time: ${totalLoopElapsedMs}ms (${(totalLoopElapsedMs / 1000).toFixed(2)}s)`);
 
-  // Send final summary to Discord with token usage
+  // Send final summary to Discord with token usage and elapsed time
   await streamProgressToDiscord(threadId, {
     type: 'checkpoint',
     checkpointData: {
@@ -486,10 +545,13 @@ export async function executeSequentialThinkingLoop(
       totalInputTokens,
       totalOutputTokens,
       totalTokens: totalInputTokens + totalOutputTokens,
+      totalElapsedMs: totalLoopElapsedMs,
     },
   });
 
   await releaseLock(threadId);
+  await releaseRedisLock(threadId);
+  await deleteCachedSession(threadId);
 
   return { success: true, finalResponse, turns, finalConfidence: state.confidenceScore };
 }

@@ -12,6 +12,7 @@ resource "kubernetes_secret" "discord_bot_secrets" {
 
   data = {
     DISCORD_TOKEN         = var.discord_token
+    STOAT_TOKEN           = var.stoat_token
     LITELLM_API_KEY       = var.litellm_api_key
     AWS_ACCESS_KEY_ID     = var.aws_access_key
     AWS_SECRET_ACCESS_KEY = var.aws_secret_key
@@ -114,6 +115,16 @@ resource "kubernetes_deployment" "discord_bot" {
       spec {
         service_account_name = kubernetes_service_account.discord_bot.metadata[0].name
 
+        node_selector = {
+          "workload-type" = "general"
+        }
+
+        toleration {
+          key      = "dedicated"
+          operator = "Equal"
+          value    = "general"
+          effect   = "NoSchedule"
+        }
         image_pull_secrets {
           name = kubernetes_secret.ecr_registry.metadata[0].name
         }
@@ -134,6 +145,16 @@ resource "kubernetes_deployment" "discord_bot" {
               secret_key_ref {
                 name = kubernetes_secret.discord_bot_secrets.metadata[0].name
                 key  = "DISCORD_TOKEN"
+              }
+            }
+          }
+
+          env {
+            name = "STOAT_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.discord_bot_secrets.metadata[0].name
+                key  = "STOAT_TOKEN"
               }
             }
           }
@@ -226,6 +247,31 @@ resource "kubernetes_deployment" "discord_bot" {
           env {
             name  = "PLANNER_MODEL_ID"
             value = "kimi-k2.5"
+          }
+
+          env {
+            name  = "REDIS_URL"
+            value = "redis://redis.discord-bot.svc.cluster.local:6379"
+          }
+
+          env {
+            name  = "REDIS_ENABLED"
+            value = "true"
+          }
+
+          env {
+            name  = "CHAT_PLATFORM"
+            value = var.chat_platform
+          }
+
+          env {
+            name  = "STOAT_BOT_ID"
+            value = var.stoat_bot_id
+          }
+
+          env {
+            name  = "LITELLM_MAX_CONNECTIONS"
+            value = "50"
           }
 
           liveness_probe {

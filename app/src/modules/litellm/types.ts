@@ -77,6 +77,10 @@ export enum TaskType {
   GENERAL_CONVO = 'general-convo',
   SOCIAL = 'social',
   WRITING = 'writing',
+  PROOFREADER = 'proofreader', // NEW: Grammar/spellcheck only, preserves intent
+
+  // Shell Command Suggestions
+  SHELL_COMMAND = 'shell-command',
 }
 
 export enum AgentRole {
@@ -89,6 +93,7 @@ export enum AgentRole {
   DOCUMENTATION_WRITER = 'documentation-writer',
   DBA = 'dba',
   RESEARCHER = 'researcher',
+  SHELL_COMMANDER = 'shell-commander',
 }
 
 export enum FlowType {
@@ -96,6 +101,10 @@ export enum FlowType {
   SEQUENTIAL_THINKING = 'sequential-thinking',
   BRANCH = 'branch',
   BREAKGLASS = 'breakglass',
+  SHELL = 'shell',
+  ARCHITECTURE = 'architecture', // Theoretical/design planning flow (no code generation)
+  SOCIAL = 'social', // NEW: Social interactions (tier 1 models)
+  PROOFREADER = 'proofreader', // NEW: Grammar/spellcheck only (tier 1 models)
 }
 
 export enum TaskComplexity {

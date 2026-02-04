@@ -6,6 +6,7 @@ import { executeSequentialThinkingLoop } from '../../modules/agentic/loop';
 import { getMaxTurns, getCheckpointInterval, getModelForAgent } from '../../templates/registry';
 import { generateThreadName } from '../../modules/litellm/opus';
 import { getDiscordClient, createThread } from '../../modules/discord/index';
+import { getChatClient } from '../../modules/chat';
 import { trajectoryEvaluator } from '../../modules/reflexion/evaluator';
 import { streamProgressToDiscord } from '../../modules/agentic/progress';
 import { addReflectionToHistory, addKeyInsight } from '../../modules/reflexion/memory';
@@ -29,15 +30,26 @@ export async function executeSequentialThinkingFlow(
     if (!context.isThread) {
         log.info('Creating thread for execution');
         const threadName = await generateThreadName(context.history.current_message);
-        const client = getDiscordClient();
-        const newThread = await createThread(
-            client,
-            message.channel_id,
-            message.id,
-            threadName
-        );
-        finalThreadId = newThread.id;
-        responseChannelId = newThread.id;
+  const chatClient = getChatClient();
+        if (chatClient && chatClient.platform !== 'discord') {
+            const newThread = await chatClient.createThread(
+                message.channel_id,
+                message.id,
+                threadName
+            );
+            finalThreadId = newThread.id;
+            responseChannelId = newThread.id;
+        } else {
+            const client = getDiscordClient();
+            const newThread = await createThread(
+                client,
+                message.channel_id,
+                message.id,
+                threadName
+            );
+            finalThreadId = newThread.id;
+            responseChannelId = newThread.id;
+        }
     }
 
     // Setup session (this gets or creates the session in DynamoDB)

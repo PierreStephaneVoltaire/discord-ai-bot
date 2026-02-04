@@ -1,7 +1,10 @@
 import { getConfig } from '../config/index';
 import { getDiscordClient, getMessages } from '../modules/discord/index';
+import { getChatClient } from '../modules/chat';
+import type { ChatMessage } from '../modules/chat/types';
 import { createLogger } from '../utils/logger';
 import type { DiscordMessagePayload, DiscordAttachment } from '../modules/discord/types';
+import type { PollHistoryEntry } from '../modules/dynamodb/types';
 import type { FormattedHistory, AttachmentCategory, ThreadContext } from './types';
 
 const log = createLogger('HISTORY');
@@ -20,6 +23,7 @@ export async function formatHistory(
 
   const config = getConfig();
   const client = getDiscordClient();
+  const chatClient = getChatClient();
 
   const channelId = thread.thread_id || thread.channel_id;
 
@@ -27,8 +31,14 @@ export async function formatHistory(
   // This prevents context poisoning when creating new threads
   let messages: Awaited<ReturnType<typeof getMessages>> = [];
   if (thread.thread_id) {
-    messages = await getMessages(client, channelId, 50);
-    log.info(`Fetched ${messages.length} messages from thread ${thread.thread_id}`);
+    if (chatClient && chatClient.platform !== 'discord') {
+      const chatMessages = await chatClient.getHistory(channelId, 50);
+      messages = chatMessages.map(mapChatMessageToDiscordHistory);
+      log.info(`Fetched ${messages.length} messages from ${chatClient.platform} channel ${thread.thread_id}`);
+    } else {
+      messages = await getMessages(client, channelId, 50);
+      log.info(`Fetched ${messages.length} messages from thread ${thread.thread_id}`);
+    }
   } else {
     log.info('Not in a thread yet - using empty history for new thread creation');
   }
@@ -175,4 +185,54 @@ function categorizeAttachments(attachments: DiscordAttachment[]): AttachmentCate
 function getExtension(filename: string): string {
   const parts = filename.toLowerCase().split('.');
   return parts.length > 1 ? parts[parts.length - 1] : '';
+}
+
+function mapChatMessageToDiscordHistory(message: ChatMessage): Awaited<ReturnType<typeof getMessages>>[number] {
+  return {
+    id: message.id,
+    content: message.content,
+    author: {
+      id: message.author.id,
+      username: message.author.username,
+      bot: message.author.bot,
+      global_name: message.author.displayName || undefined,
+    },
+    attachments: message.attachments.map((att) => ({
+      id: att.id,
+      filename: att.filename,
+      url: att.url,
+      content_type: att.contentType,
+      size: att.size,
+    })),
+    timestamp: message.timestamp,
+    mentions: message.mentions.map((mention) => ({
+      id: mention.id,
+      username: mention.username,
+    })),
+  };
+}
+
+/**
+ * Format a poll entry for inclusion in history
+ */
+export function formatPollEntry(entry: PollHistoryEntry): string {
+  let formatted = `Bot: ${entry.question}\n\n`;
+  
+  entry.options.forEach(opt => {
+    formatted += `${opt.id}. ${opt.label}\n`;
+    formatted += `   ${opt.description}\n`;
+  });
+  
+  formatted += `\n${entry.selectedBy}: ${entry.selectedOption}`;
+  
+  return formatted;
+}
+
+/**
+ * Format multiple poll entries for history
+ */
+export function formatPollEntries(entries: PollHistoryEntry[]): string {
+  if (!entries || entries.length === 0) return '';
+  
+  return entries.map(entry => formatPollEntry(entry)).join('\n\n---\n\n');
 }

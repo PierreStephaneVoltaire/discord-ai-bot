@@ -63,6 +63,16 @@ resource "kubernetes_deployment" "dev_sandbox" {
       spec {
         service_account_name = kubernetes_service_account.sandbox.metadata[0].name
 
+        node_selector = {
+          "workload-type" = "ai-services"
+        }
+
+        toleration {
+          key      = "dedicated"
+          operator = "Equal"
+          value    = "ai-services"
+          effect   = "NoSchedule"
+        }
         image_pull_secrets {
           name = kubernetes_secret.ecr_registry.metadata[0].name
         }

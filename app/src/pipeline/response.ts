@@ -1,4 +1,5 @@
 import { getDiscordClient, sendMessage, sendMessageChunks } from '../modules/discord/index';
+import { getChatClient } from '../modules/chat';
 import { createLogger } from '../utils/logger';
 import { parseResponse } from '../modules/workspace/response-parser';
 import { workspaceManager } from '../modules/workspace/manager';
@@ -30,7 +31,8 @@ export async function formatAndSendResponse(input: ResponseInput): Promise<void>
     });
   }
 
-  const client = getDiscordClient();
+  const chatClient = getChatClient();
+  const client = chatClient && chatClient.platform !== 'discord' ? null : getDiscordClient();
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
@@ -38,9 +40,17 @@ export async function formatAndSendResponse(input: ResponseInput): Promise<void>
 
     if (part.type === 'text') {
       if (part.content.length > MAX_DISCORD_LENGTH) {
-        await sendMessageChunks(client, input.channelId, part.content, MAX_DISCORD_LENGTH);
+        if (chatClient && chatClient.platform !== 'discord') {
+          await chatClient.sendMessageChunks(input.channelId, part.content, MAX_DISCORD_LENGTH);
+        } else if (client) {
+          await sendMessageChunks(client, input.channelId, part.content, MAX_DISCORD_LENGTH);
+        }
       } else if (part.content.trim()) {
-        await sendMessage(client, input.channelId, { content: part.content });
+        if (chatClient && chatClient.platform !== 'discord') {
+          await chatClient.sendMessage(input.channelId, { content: part.content });
+        } else if (client) {
+          await sendMessage(client, input.channelId, { content: part.content });
+        }
       }
     } else if (part.type === 'file' && part.filePath) {
       try {
@@ -53,15 +63,27 @@ export async function formatAndSendResponse(input: ResponseInput): Promise<void>
         const content = await workspaceManager.readFile(input.threadId, part.filePath);
         log.info(`✅ File read successful! Size: ${content.length} bytes`);
 
-        await sendMessage(client, input.channelId, {
-          content: `📎 **${part.content}**`,
-          files: [
-            {
-              name: part.content,
-              data: content,
-            },
-          ],
-        });
+        if (chatClient && chatClient.platform !== 'discord') {
+          await chatClient.sendMessage(input.channelId, {
+            content: `📎 **${part.content}**`,
+            files: [
+              {
+                name: part.content,
+                data: content,
+              },
+            ],
+          });
+        } else if (client) {
+          await sendMessage(client, input.channelId, {
+            content: `📎 **${part.content}**`,
+            files: [
+              {
+                name: part.content,
+                data: content,
+              },
+            ],
+          });
+        }
         log.info(`✅ File uploaded to Discord: ${part.content}`);
       } catch (err) {
         log.error(`❌ Failed to attach file ${part.filePath}`);
@@ -69,9 +91,15 @@ export async function formatAndSendResponse(input: ResponseInput): Promise<void>
         log.error(`  Error: ${String(err)}`);
         log.error(`  Stack: ${err instanceof Error ? err.stack : 'N/A'}`);
 
-        await sendMessage(client, input.channelId, {
-          content: `⚠️ *Could not attach file \`${part.content}\`. It may not have been created or saved properly.*\n\`\`\`\n${String(err)}\n\`\`\``
-        });
+        if (chatClient && chatClient.platform !== 'discord') {
+          await chatClient.sendMessage(input.channelId, {
+            content: `⚠️ *Could not attach file \`${part.content}\`. It may not have been created or saved properly.*\n\`\`\`\n${String(err)}\n\`\`\``
+          });
+        } else if (client) {
+          await sendMessage(client, input.channelId, {
+            content: `⚠️ *Could not attach file \`${part.content}\`. It may not have been created or saved properly.*\n\`\`\`\n${String(err)}\n\`\`\``
+          });
+        }
       }
     }
 

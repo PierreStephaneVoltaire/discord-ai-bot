@@ -52,6 +52,7 @@ export async function queryExecutionLogs(
   log.info(`Querying execution logs for thread ${threadId}, limit ${limit}`);
 
   try {
+    const startTime = Date.now();
     const result = await client.send(
       new QueryCommand({
         TableName: config.DYNAMODB_EXECUTIONS_TABLE,
@@ -64,6 +65,8 @@ export async function queryExecutionLogs(
         Limit: limit * 3, // Get more to filter and group
       })
     );
+    const elapsedMs = Date.now() - startTime;
+    log.info(`⏱️ DynamoDB queryExecutionLogs completed in ${elapsedMs}ms`);
 
     const items = (result.Items || []) as ExecutionLogEntry[];
     log.info(`Found ${items.length} execution log entries`);

@@ -4,19 +4,68 @@ import { chatCompletion, extractContent } from '../../modules/litellm/index';
 import { createPlan } from '../planning';
 import { setupSession } from '../session';
 import { streamProgressToDiscord } from '../../modules/agentic/progress';
+import { getDiscordClient } from '../../modules/discord/index';
+import { createPoll, waitForPollVote, PollOption, type PollResult } from '../../modules/discord/api';
+import { updateSession, updateSessionConfidence, getSession } from '../../modules/dynamodb/sessions';
 import type { FlowContext, FlowResult } from './types';
+import type { PollHistoryEntry } from '../../modules/dynamodb/types';
 
 const log = createLogger('FLOW:BRANCH');
 
-function getBranchModels(tier: 'tier3' | 'tier4') {
-    const models = MODEL_TIERS[tier];
-    const len = models.length;
+/**
+ * Select 3 random tier3 models for brainstorming
+ */
+function getRandomTier3Models(): string[] {
+    const tier3Models = [...MODEL_TIERS.tier3];
+    // Shuffle array
+    for (let i = tier3Models.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [tier3Models[i], tier3Models[j]] = [tier3Models[j], tier3Models[i]];
+    }
+    // Return first 3 (or all if less than 3)
+    return tier3Models.slice(0, 3);
+}
 
-    return {
-        model1: models[len - 2],    // One before the last
-        model2: models[len - 1],    // The last one
-        consolidator: models[len - 1], // Same as model2 (the strongest)
-    };
+/**
+ * Select 1 random tier4 model for aggregation
+ */
+function getRandomTier4Model(): string {
+    const tier4Models = MODEL_TIERS.tier4;
+    const randomIndex = Math.floor(Math.random() * tier4Models.length);
+    return tier4Models[randomIndex];
+}
+
+interface AggregatorOutput {
+    question: string;
+    options: PollOption[];
+}
+
+/**
+ * Parse aggregator output to extract poll options
+ */
+function parseAggregatorOutput(content: string): AggregatorOutput | null {
+    try {
+        // Try to find JSON in the response
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (parsed.question && Array.isArray(parsed.options) && parsed.options.length === 3) {
+                return {
+                    question: parsed.question,
+                    options: parsed.options.map((opt: any) => ({
+                        id: opt.id,
+                        label: opt.label,
+                        description: opt.description,
+                    })),
+                };
+            }
+        }
+        log.error('Failed to parse aggregator output - invalid format');
+        return null;
+    } catch (error) {
+        log.error(`Failed to parse aggregator output: ${error}`);
+        return null;
+    }
 }
 
 export async function executeBranchFlow(
@@ -24,15 +73,14 @@ export async function executeBranchFlow(
 ): Promise<FlowResult> {
     log.info('Phase: BRANCH_FLOW');
 
-    // Determine tier based on message content
-    const lower = context.history.current_message.toLowerCase();
-    const isDeep = lower.includes('think deeply') || lower.includes('thoroughly');
-    const tier = isDeep ? 'tier4' : 'tier3';
+    // 1. Select 3 random tier3 models and 1 random tier4 aggregator
+    const branchModels = getRandomTier3Models();
+    const aggregatorModel = getRandomTier4Model();
+    
+    log.info(`Using tier3 models: ${branchModels.join(', ')}`);
+    log.info(`Using tier4 aggregator: ${aggregatorModel}`);
 
-    const { model1, model2, consolidator } = getBranchModels(tier);
-    log.info(`Using models: ${model1}, ${model2} for brainstorming; ${consolidator} for consolidation`);
-
-    // 1. Planning with Opus (theory/suggestions only)
+    // 2. Planning with Opus (theory/suggestions only)
     const sessionResult = await setupSession(context.threadId, context.channelId);
     const planning = await createPlan({
         threadId: context.threadId,
@@ -51,12 +99,13 @@ You are an expert architect and technical strategist exploring multiple solution
 ${planning.reformulated_prompt}
 
 ## Your Task
-Suggest 2-3 **distinct architectural approaches** to achieve this goal.
+Suggest **3 distinct architectural approaches** to achieve this goal.
 
 ## CRITICAL RULES
 - **NO CODE**: Do not write any code, code blocks, or implementation snippets.
 - **THEORY ONLY**: Focus exclusively on theory, architecture, strategy, and high-level design.
 - **Think Step-by-Step**: Explain your reasoning for why each approach works.
+- **Be Distinct**: Each approach should be fundamentally different from the others.
 
 ## Format for Each Approach
 1. **Title**: Clear name for the approach
@@ -70,85 +119,200 @@ Suggest 2-3 **distinct architectural approaches** to achieve this goal.
 Keep each approach concise but thorough. Focus on the "what" and "why", not the "how to code it".
 `;
 
-    // 2. Parallel brainstorming
-    log.info('Calling brainstorming models in parallel');
+    // 3. Parallel brainstorming with 3 models
+    log.info('Calling 3 brainstorming models in parallel');
 
-    // Show progress for model 1
-    await streamProgressToDiscord(context.threadId, {
-        type: 'branching',
-        branchingPhase: 'model1',
-        model: model1
-    });
+    // Show progress for all 3 models
+    await Promise.all([
+        streamProgressToDiscord(context.threadId, {
+            type: 'branching',
+            branchingPhase: 'model1',
+            model: branchModels[0]
+        }),
+        streamProgressToDiscord(context.threadId, {
+            type: 'branching',
+            branchingPhase: 'model2',
+            model: branchModels[1]
+        }),
+        streamProgressToDiscord(context.threadId, {
+            type: 'branching',
+            branchingPhase: 'model3',
+            model: branchModels[2]
+        }),
+    ]);
 
-    const [response1, response2] = await Promise.all([
+    const [response1, response2, response3] = await Promise.all([
         chatCompletion({
-            model: model1,
+            model: branchModels[0],
             messages: [{ role: 'user', content: brainstormingPrompt }],
         }),
-        (async () => {
-            // Show progress for model 2
-            await streamProgressToDiscord(context.threadId, {
-                type: 'branching',
-                branchingPhase: 'model2',
-                model: model2
-            });
-            return chatCompletion({
-                model: model2,
-                messages: [{ role: 'user', content: brainstormingPrompt }],
-            });
-        })()
+        chatCompletion({
+            model: branchModels[1],
+            messages: [{ role: 'user', content: brainstormingPrompt }],
+        }),
+        chatCompletion({
+            model: branchModels[2],
+            messages: [{ role: 'user', content: brainstormingPrompt }],
+        }),
     ]);
 
     const content1 = extractContent(response1);
     const content2 = extractContent(response2);
+    const content3 = extractContent(response3);
 
-    // 3. Consolidation
-    log.info('Consolidating approaches');
+    // 4. Aggregation with tier4 model
+    log.info('Aggregating approaches with tier4 model');
 
-    // Show consolidation progress
     await streamProgressToDiscord(context.threadId, {
         type: 'branching',
         branchingPhase: 'consolidator',
-        model: consolidator
+        model: aggregatorModel
     });
 
-    const consolidationPrompt = `
-You are a lead architect consolidating brainstorming from two expert advisors.
+    // Load the aggregator prompt template
+    const fs = await import('fs');
+    const path = await import('path');
+    const aggregatorPromptTemplate = fs.readFileSync(
+        path.join(process.cwd(), 'app/templates/prompts/branch-aggregator.txt'),
+        'utf-8'
+    );
 
-## Original User Question
-"${context.history.current_message}"
+    const aggregatorPrompt = `${aggregatorPromptTemplate}
 
-## Expert A's Suggestions
+## Input Approaches
+
+### Model 1 (${branchModels[0]}) Approaches:
 ${content1}
 
-## Expert B's Suggestions
+### Model 2 (${branchModels[1]}) Approaches:
 ${content2}
 
-## Your Task
-1. **Identify Unique Approaches**: Find all distinct architectural approaches from both experts.
-2. **Merge Similar Ones**: If both suggest similar approaches, combine into one with the best elements.
-3. **Summarize Each**: For each unique approach, provide a concise summary.
-4. **Recommend**: Suggest which approach best fits different scenarios.
-5. **Ask User**: End by asking which approach interests them most.
+### Model 3 (${branchModels[2]}) Approaches:
+${content3}
 
-## Format Requirements
-- **NO CODE**: This is purely theoretical/architectural discussion.
-- Use bullet points (max 7 per approach).
-- Be concise but complete.
-- Explain reasoning step-by-step where helpful.
-- End with: "Which approach would you like to explore further?"
-`;
+## User's Original Question
+"${context.history.current_message}"
 
-    const finalResponse = await chatCompletion({
-        model: consolidator,
-        messages: [{ role: 'user', content: consolidationPrompt }],
+Analyze these 9 approaches and produce your JSON output now.`;
+
+    const aggregatorResponse = await chatCompletion({
+        model: aggregatorModel,
+        messages: [{ role: 'user', content: aggregatorPrompt }],
     });
 
-    const finalContent = extractContent(finalResponse);
+    const aggregatorContent = extractContent(aggregatorResponse);
+    const pollData = parseAggregatorOutput(aggregatorContent);
+
+    if (!pollData) {
+        log.error('Failed to create poll from aggregator output');
+        // Fallback: return the aggregator's text response
+        return {
+            response: aggregatorContent,
+            model: aggregatorModel,
+            responseChannelId: context.channelId,
+        };
+    }
+
+    // 5. Create Discord poll with "Other" option
+    log.info('Creating Discord poll');
+
+    const pollOptions: PollOption[] = [
+        ...pollData.options,
+        { id: 'D', label: 'Other', description: 'None of the above - I have a different approach in mind' }
+    ];
+
+    const client = getDiscordClient();
+    const pollMessageId = await createPoll(client, context.channelId, {
+        question: pollData.question,
+        options: pollOptions,
+        duration: 1, // 1 hour (but we'll end on first vote)
+    });
+
+    // 6. Wait for first vote
+    log.info('Waiting for poll vote');
+    
+    await streamProgressToDiscord(context.threadId, {
+        type: 'branching',
+        branchingPhase: 'waiting_for_vote',
+        model: 'poll'
+    });
+
+    let pollResult = await waitForPollVote(
+        client,
+        context.channelId,
+        pollMessageId,
+        pollOptions.length,
+        300000 // 5 minute timeout
+    );
+
+    if (!pollResult) {
+        log.info('Poll timed out, using default option A');
+        // Timeout - default to option A
+        pollResult = {
+            messageId: pollMessageId,
+            selectedOptionId: 'A',
+            selectedBy: { id: 'timeout', username: 'System (timeout)' }
+        };
+    }
+
+    // 7. Handle "Other" option
+    if (pollResult.selectedOptionId === 'D') {
+        log.info('User selected "Other", lowering confidence and asking for clarification');
+        
+        // Lower confidence by 10
+        await updateSessionConfidence(context.threadId, -10);
+
+        // Save poll entry to session
+        const pollEntry: PollHistoryEntry = {
+            question: pollData.question,
+            options: pollOptions,
+            selectedOption: 'D (Other)',
+            selectedBy: pollResult.selectedBy.username,
+            timestamp: new Date().toISOString()
+        };
+
+        const session = await getSession(context.threadId);
+        if (session) {
+            await updateSession(context.threadId, {
+                poll_entries: [...(session.poll_entries || []), pollEntry]
+            });
+        }
+
+        return {
+            response: `You selected "Other". What approach would you like to explore?`,
+            model: 'branch-aggregator',
+            responseChannelId: context.channelId,
+        };
+    }
+
+    // 8. Get selected option details
+    const selectedOption = pollOptions.find(o => o.id === pollResult.selectedOptionId);
+    
+    // 9. Save poll entry to session history
+    const pollEntry: PollHistoryEntry = {
+        question: pollData.question,
+        options: pollOptions.slice(0, 3), // Don't include "Other" in history
+        selectedOption: pollResult.selectedOptionId,
+        selectedBy: pollResult.selectedBy.username,
+        timestamp: new Date().toISOString()
+    };
+
+    const session = await getSession(context.threadId);
+    if (session) {
+        await updateSession(context.threadId, {
+            poll_entries: [...(session.poll_entries || []), pollEntry]
+        });
+    }
+
+    // 10. Return result with the selection
+    // The pipeline will continue and the classification prompt will decide next flow
+    log.info(`Poll completed. User ${pollResult.selectedBy.username} selected option ${pollResult.selectedOptionId}`);
 
     return {
-        response: finalContent,
-        model: consolidator,
+        response: `You selected: **${selectedOption?.label || pollResult.selectedOptionId}**\n\n` +
+                  `${selectedOption?.description || ''}\n\n` +
+                  `Proceeding with this approach...`,
+        model: 'branch-aggregator',
         responseChannelId: context.channelId,
     };
 }

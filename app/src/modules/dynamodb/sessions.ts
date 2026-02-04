@@ -12,12 +12,15 @@ export async function getSession(threadId: string): Promise<Session | null> {
   const client = getDynamoDBClient();
   const config = getConfig();
 
+  const startTime = Date.now();
   const result = await client.send(
     new GetCommand({
       TableName: config.DYNAMODB_SESSIONS_TABLE,
       Key: { thread_id: threadId },
     })
   );
+  const elapsedMs = Date.now() - startTime;
+  log.info(`⏱️ DynamoDB getSession completed in ${elapsedMs}ms`);
 
   const exists = !!result.Item;
   log.info(`Session found: ${exists}`);
@@ -35,12 +38,15 @@ export async function createSession(session: Session): Promise<void> {
   const client = getDynamoDBClient();
   const config = getConfig();
 
+  const startTime = Date.now();
   await client.send(
     new PutCommand({
       TableName: config.DYNAMODB_SESSIONS_TABLE,
       Item: session,
     })
   );
+  const elapsedMs = Date.now() - startTime;
+  log.info(`⏱️ DynamoDB createSession completed in ${elapsedMs}ms`);
 
   log.info(`Session created successfully: ${session.thread_id}`);
 }
@@ -68,6 +74,7 @@ export async function updateSession(threadId: string, updates: SessionUpdate): P
     return;
   }
 
+  const startTime = Date.now();
   await client.send(
     new UpdateCommand({
       TableName: config.DYNAMODB_SESSIONS_TABLE,
@@ -77,6 +84,8 @@ export async function updateSession(threadId: string, updates: SessionUpdate): P
       ExpressionAttributeValues: expressionAttributeValues,
     })
   );
+  const elapsedMs = Date.now() - startTime;
+  log.info(`⏱️ DynamoDB updateSession completed in ${elapsedMs}ms`);
 
   log.info(`Session updated successfully: ${threadId}`);
 }
@@ -129,8 +138,11 @@ export async function deleteSession(threadId: string): Promise<void> {
   const client = getDynamoDBClient();
   const config = getConfig();
 
+  const startTime = Date.now();
   await client.send(new DeleteCommand({
     TableName: config.DYNAMODB_SESSIONS_TABLE,
     Key: { thread_id: threadId },
   }));
+  const elapsedMs = Date.now() - startTime;
+  log.info(`⏱️ DynamoDB deleteSession completed in ${elapsedMs}ms`);
 }

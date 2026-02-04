@@ -45,7 +45,12 @@ export class WorkspaceManager {
         const path = `/workspace/${threadId}`;
         log.info(`Ensuring workspace: ${path}`);
 
+        const podName = await this.getSandboxPod();
+        log.info(`Executing mkdir in pod: ${podName}, container: mcp-shell`);
+
         await this.runCommand(threadId, ['mkdir', '-p', path]);
+        
+        log.info(`✅ Workspace directory created successfully: ${path}`);
         return path;
     }
 

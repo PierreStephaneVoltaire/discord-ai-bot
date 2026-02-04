@@ -112,6 +112,55 @@ export class TrajectoryEvaluator {
         };
     }
 
+    /**
+     * Evaluate architecture/design trajectory (NO code metrics)
+     * Focuses on: completeness, clarity, conflicting info, facts captured, holes identified
+     */
+    async evaluateArchitectureTrajectory(
+        turns: ExecutionTurn[],
+        originalTask: string,
+        maxTurns: number
+    ): Promise<TrajectoryEvaluation> {
+        log.info(`Evaluating architecture trajectory with ${turns.length} turns`);
+
+        const summary = this.summarizeTrajectory(turns);
+
+        // 1. Task Completion Score (0-100) - Did we answer the design question?
+        const taskCompletion = this.scoreArchitectureCompletion(summary, turns);
+
+        // 2. Design Quality Score (0-100) - Clarity, coherence, no contradictions
+        const designQuality = this.scoreDesignQuality(turns);
+
+        // 3. Efficiency Score (0-100) - Conciseness of the discussion
+        const efficiency = this.scoreArchitectureEfficiency(summary.total_turns, maxTurns);
+
+        // 4. Overall confidence score (weighted average)
+        const score = Math.round(
+            taskCompletion * 0.5 +
+            designQuality * 0.35 +
+            efficiency * 0.15
+        );
+
+        // 5. Identify issues and suggestions
+        const { issues, suggestions } = this.generateArchitectureFeedback(turns, score);
+
+        // 6. Determine if progress was made
+        const has_progress = score > 40 && summary.completion_status !== 'failed';
+
+        log.info(`Architecture evaluation complete: score=${score}, progress=${has_progress}`);
+
+        return {
+            score: Math.max(10, Math.min(100, score)), // Clamp 10-100
+            reasoning: this.generateArchitectureReasoning(taskCompletion, designQuality, efficiency, turns),
+            has_progress,
+            issues,
+            suggestions,
+            task_completion: taskCompletion,
+            code_quality: designQuality, // Reuse field for design quality
+            efficiency,
+        };
+    }
+
     private scoreTaskCompletion(summary: TrajectorySummary, turns: ExecutionTurn[]): number {
         // Base score on completion status
         if (summary.completion_status === 'complete') {
@@ -146,6 +195,57 @@ export class TrajectoryEvaluator {
         efficiencyScore -= errors * 10;
 
         return Math.max(20, Math.min(100, efficiencyScore));
+    }
+
+    private scoreArchitectureCompletion(summary: TrajectorySummary, turns: ExecutionTurn[]): number {
+        // Base score on completion status
+        if (summary.completion_status === 'complete') {
+            return 100;
+        } else if (summary.completion_status === 'failed') {
+            return 20;
+        }
+
+        // Check if the last turn provides a clear conclusion or plan
+        const lastTurn = turns[turns.length - 1];
+        const hasConclusion = lastTurn?.response?.toLowerCase().includes('conclusion') ||
+                              lastTurn?.response?.toLowerCase().includes('summary') ||
+                              lastTurn?.response?.toLowerCase().includes('plan') ||
+                              lastTurn?.response?.toLowerCase().includes('recommendation');
+
+        return hasConclusion ? 75 : 50;
+    }
+
+    private scoreDesignQuality(turns: ExecutionTurn[]): number {
+        // Check for indicators of good architectural thinking
+        const allResponses = turns.map(t => t.response?.toLowerCase() || '').join(' ');
+
+        let score = 70; // Base score
+
+        // Positive indicators
+        if (allResponses.includes('trade-off')) score += 5;
+        if (allResponses.includes('alternative')) score += 5;
+        if (allResponses.includes('consideration')) score += 5;
+        if (allResponses.includes('constraint')) score += 5;
+        if (allResponses.includes('assumption')) score += 5;
+
+        // Negative indicators (potential issues)
+        if (allResponses.includes('confusing')) score -= 10;
+        if (allResponses.includes('unclear')) score -= 10;
+        if (allResponses.includes('contradiction')) score -= 15;
+
+        return Math.max(20, Math.min(100, score));
+    }
+
+    private scoreArchitectureEfficiency(totalTurns: number, maxTurns: number): number {
+        // Architecture discussions should be concise
+        const turnRatio = totalTurns / maxTurns;
+
+        // Ideal: 3-8 turns for architecture discussion
+        if (totalTurns <= 3) return 90; // Very efficient
+        if (totalTurns <= 8) return 100; // Optimal
+        if (totalTurns <= 12) return 80;
+        if (totalTurns <= 15) return 60;
+        return 40; // Too long
     }
 
     private generateFeedback(
@@ -183,6 +283,34 @@ export class TrajectoryEvaluator {
         return { issues, suggestions };
     }
 
+    private generateArchitectureFeedback(
+        turns: ExecutionTurn[],
+        score: number
+    ): { issues: string[]; suggestions: string[] } {
+        const issues: string[] = [];
+        const suggestions: string[] = [];
+        const allResponses = turns.map(t => t.response?.toLowerCase() || '').join(' ');
+
+        if (turns.length > 12) {
+            issues.push('Architecture discussion is lengthy');
+            suggestions.push('Consider being more concise in architectural explanations');
+        }
+
+        if (!allResponses.includes('trade-off') && !allResponses.includes('alternative')) {
+            suggestions.push('Consider discussing trade-offs and alternatives');
+        }
+
+        if (!allResponses.includes('constraint')) {
+            suggestions.push('Consider explicitly stating constraints and assumptions');
+        }
+
+        if (score < 50) {
+            suggestions.push('Consider breaking down the architectural question into smaller parts');
+        }
+
+        return { issues, suggestions };
+    }
+
     private generateReasoning(
         taskCompletion: number,
         codeQuality: number,
@@ -192,6 +320,16 @@ export class TrajectoryEvaluator {
         return `Task completion: ${taskCompletion}%, Code quality: ${codeQuality}%, Efficiency: ${efficiency}%. ` +
             `Status: ${summary.completion_status}. ` +
             `Used ${summary.tools_used.length} tools across ${summary.total_turns} turns with ${summary.errors_encountered} errors.`;
+    }
+
+    private generateArchitectureReasoning(
+        taskCompletion: number,
+        designQuality: number,
+        efficiency: number,
+        turns: ExecutionTurn[]
+    ): string {
+        return `Task completion: ${taskCompletion}%, Design quality: ${designQuality}%, Efficiency: ${efficiency}%. ` +
+            `Discussion spanned ${turns.length} turns focusing on architectural design.`;
     }
 }
 

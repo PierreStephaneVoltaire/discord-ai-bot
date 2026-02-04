@@ -8,6 +8,27 @@ import {
 import { createLogger } from '../../utils/logger';
 import type { ChannelInfo, SendMessageOptions } from './types';
 
+export interface PollOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface CreatePollOptions {
+  question: string;
+  options: PollOption[];
+  duration: number; // in hours
+}
+
+export interface PollResult {
+  messageId: string;
+  selectedOptionId: string;
+  selectedBy: {
+    id: string;
+    username: string;
+  };
+}
+
 const log = createLogger('DISCORD:API');
 
 export async function sendMessage(
@@ -186,4 +207,111 @@ function splitContent(content: string, maxLength: number): string[] {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Create a Discord poll with the given options
+ * Discord polls don't have a native API for programmatic vote detection,
+ * so we'll use reactions as a fallback mechanism
+ */
+export async function createPoll(
+  client: Client,
+  channelId: string,
+  options: CreatePollOptions
+): Promise<string> {
+  log.info(`createPoll in ${channelId}, question: ${options.question}`);
+
+  const channel = await client.channels.fetch(channelId);
+  if (!channel || !channel.isTextBased()) {
+    log.error(`Channel ${channelId} not found or not text-based`);
+    throw new Error(`Invalid channel: ${channelId}`);
+  }
+
+  // Format options for Discord (A, B, C, D, etc.)
+  const reactionEmojis = ['🇦', '🇧', '🇨', '🇩', '🇪', '🇫', '🇬', '🇭', '🇮', '🇯'];
+  
+  let content = `**${options.question}**\n\n`;
+  options.options.forEach((opt, idx) => {
+    content += `${reactionEmojis[idx]} **${opt.label}**\n`;
+    content += `   ${opt.description}\n\n`;
+  });
+  content += `\n*Vote with the corresponding reaction. First vote wins!*`;
+
+  const message = await (channel as TextChannel | ThreadChannel).send({ content });
+  log.info(`Poll created with message ID: ${message.id}`);
+
+  // Add reaction options
+  for (let i = 0; i < options.options.length; i++) {
+    await message.react(reactionEmojis[i]);
+    await sleep(500); // Small delay between reactions
+  }
+
+  return message.id;
+}
+
+/**
+ * Wait for the first vote on a poll message
+ * Returns the selected option index (0-based) and user info
+ */
+export async function waitForPollVote(
+  client: Client,
+  channelId: string,
+  messageId: string,
+  optionCount: number,
+  timeoutMs: number = 300000 // 5 minutes default
+): Promise<PollResult | null> {
+  log.info(`waitForPollVote on message ${messageId}, timeout: ${timeoutMs}ms`);
+
+  const channel = await client.channels.fetch(channelId);
+  if (!channel || !channel.isTextBased()) {
+    log.error(`Channel ${channelId} not found or not text-based`);
+    return null;
+  }
+
+  const reactionEmojis = ['🇦', '🇧', '🇨', '🇩', '🇪', '🇫', '🇬', '🇭', '🇮', '🇯'];
+  const message = await (channel as TextChannel | ThreadChannel).messages.fetch(messageId);
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      log.info(`Poll timeout reached for message ${messageId}`);
+      resolve(null);
+    }, timeoutMs);
+
+    // Check for reactions every 2 seconds
+    const checkInterval = setInterval(async () => {
+      try {
+        const freshMessage = await (channel as TextChannel | ThreadChannel).messages.fetch(messageId);
+        const reactions = freshMessage.reactions.cache;
+
+        for (let i = 0; i < optionCount; i++) {
+          const emoji = reactionEmojis[i];
+          const reaction = reactions.find(r => r.emoji.name === emoji);
+          
+          if (reaction) {
+            const users = await reaction.users.fetch();
+            const nonBotUsers = users.filter(u => !u.bot);
+            
+            if (nonBotUsers.size > 0) {
+              const firstUser = nonBotUsers.first()!;
+              clearTimeout(timer);
+              clearInterval(checkInterval);
+              
+              log.info(`Poll vote received: option ${i} (${emoji}) by ${firstUser.username}`);
+              resolve({
+                messageId,
+                selectedOptionId: String.fromCharCode(65 + i), // A, B, C, etc.
+                selectedBy: {
+                  id: firstUser.id,
+                  username: firstUser.username,
+                },
+              });
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        log.error(`Error checking poll reactions: ${error}`);
+      }
+    }, 2000);
+  });
 }

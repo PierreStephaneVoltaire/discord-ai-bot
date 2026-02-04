@@ -53,6 +53,9 @@ export interface Session {
   last_sync?: string;                   // Last S3 sync timestamp
   escalations?: EscalationEvent[];      // Escalation history
   flow_override?: string;               // Flow override for next execution
+
+  // NEW: Poll history
+  poll_entries?: PollHistoryEntry[];
 }
 
 export interface Execution {
@@ -68,6 +71,18 @@ export interface Execution {
   opus_response?: Record<string, unknown>;
   gemini_response?: Record<string, unknown>;
   ttl?: number;
+}
+
+export interface PollHistoryEntry {
+  question: string;
+  options: Array<{
+    id: string;
+    label: string;
+    description: string;
+  }>;
+  selectedOption: string;
+  selectedBy: string;
+  timestamp: string;
 }
 
 export interface SessionUpdate {
@@ -98,6 +113,9 @@ export interface SessionUpdate {
   last_sync?: string;
   escalations?: EscalationEvent[];
   flow_override?: string;
+
+  // NEW: Poll history
+  poll_entries?: PollHistoryEntry[];
 }
 
 export interface ExecutionUpdate {

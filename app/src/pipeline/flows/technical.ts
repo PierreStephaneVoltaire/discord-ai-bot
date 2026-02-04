@@ -5,6 +5,7 @@ import { createPlan } from '../planning';
 import { executeTechnicalTask } from '../execute';
 import { generateThreadName } from '../../modules/litellm/opus';
 import { getDiscordClient, createThread } from '../../modules/discord/index';
+import { getChatClient } from '../../modules/chat';
 import { updateExecution } from '../../modules/dynamodb/executions';
 import type { FlowContext, FlowResult } from './types';
 import type { DiscordMessagePayload } from '../../modules/discord/types';
@@ -28,17 +29,30 @@ export async function executeTechnicalFlow(
     const threadName = await generateThreadName(context.history.current_message);
     log.info(`Generated thread name: ${threadName}`);
 
-    const client = getDiscordClient();
-    const newThread = await createThread(
-      client,
-      message.channel_id,
-      message.id,
-      threadName
-    );
+  const chatClient = getChatClient();
+    if (chatClient && chatClient.platform !== 'discord') {
+      const newThread = await chatClient.createThread(
+        message.channel_id,
+        message.id,
+        threadName
+      );
 
-    finalThreadId = newThread.id;
-    responseChannelId = newThread.id;
-    log.info(`Created thread: ${finalThreadId}`);
+      finalThreadId = newThread.id;
+      responseChannelId = newThread.id;
+      log.info(`Created thread (chat adapter): ${finalThreadId}`);
+    } else {
+      const client = getDiscordClient();
+      const newThread = await createThread(
+        client,
+        message.channel_id,
+        message.id,
+        threadName
+      );
+
+      finalThreadId = newThread.id;
+      responseChannelId = newThread.id;
+      log.info(`Created thread: ${finalThreadId}`);
+    }
   }
 
   log.info('Phase: SESSION_SETUP');
